@@ -19,8 +19,9 @@ COPY domains/observability/pyproject.toml .
 COPY domains/observability/src ./src
 
 # Install dependencies
-RUN pip install --no-cache-dir -e /app/shared
-RUN pip install --no-cache-dir -e .
+# Note: Installing packages directly, not editable mode for container builds
+RUN pip install --no-cache-dir /app/shared
+RUN pip install --no-cache-dir .
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
