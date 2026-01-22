@@ -35,7 +35,11 @@ def register_tools(mcp: FastMCP):
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(f"{HOMEPAGE_HOST}/api/services")
                 response.raise_for_status()
-                return response.json()
+                data = response.json()
+                # Wrap list in dict for MCP compatibility
+                if isinstance(data, list):
+                    return {"groups": data}
+                return data
         except Exception as e:
             return {"error": str(e)}
 
@@ -46,7 +50,11 @@ def register_tools(mcp: FastMCP):
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(f"{HOMEPAGE_HOST}/api/bookmarks")
                 response.raise_for_status()
-                return response.json()
+                data = response.json()
+                # Wrap list in dict for MCP compatibility
+                if isinstance(data, list):
+                    return {"bookmarks": data}
+                return data
         except Exception as e:
             return {"error": str(e)}
 
@@ -57,7 +65,11 @@ def register_tools(mcp: FastMCP):
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(f"{HOMEPAGE_HOST}/api/widgets")
                 response.raise_for_status()
-                return response.json()
+                data = response.json()
+                # Wrap list in dict for MCP compatibility
+                if isinstance(data, list):
+                    return {"widgets": data}
+                return data
         except Exception as e:
             return {"error": str(e)}
 
