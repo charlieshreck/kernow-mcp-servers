@@ -1,0 +1,116 @@
+---
+# External MCP - Consolidated external APIs MCP
+# Replaces: web-search-mcp, github-mcp, reddit-mcp, wikipedia-mcp, browser-automation-mcp
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: external-mcp-config
+  namespace: ai-platform
+  labels:
+    app: external-mcp
+    component: mcp
+data:
+  # SearXNG for web search
+  SEARXNG_URL: "http://searxng.ai-platform.svc.cluster.local:8080"
+  # Browser automation settings
+  BROWSER_TYPE: "chromium"
+  HEADLESS: "true"
+  VIEWPORT_WIDTH: "1920"
+  VIEWPORT_HEIGHT: "1080"
+  DEFAULT_TIMEOUT: "30000"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: external-mcp
+  namespace: ai-platform
+  labels:
+    app: external-mcp
+    component: mcp
+    app.kubernetes.io/part-of: mcp-servers
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: external-mcp
+  template:
+    metadata:
+      labels:
+        app: external-mcp
+        component: mcp
+    spec:
+      containers:
+        - name: mcp-server
+          image: ghcr.io/charlieshreck/mcp-external:latest
+          ports:
+            - containerPort: 8000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: external-mcp-config
+          env:
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-github
+                  key: GITHUB_TOKEN
+                  optional: false
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "100m"
+            limits:
+              memory: "2Gi"
+              cpu: "2000m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-mcp
+  namespace: ai-platform
+  labels:
+    app: external-mcp
+spec:
+  type: NodePort
+  ports:
+    - port: 8000
+      targetPort: 8000
+      nodePort: 31122
+      name: http
+  selector:
+    app: external-mcp
+---
+# Ingress for DNS-based access
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: external-mcp
+  namespace: ai-platform
+  labels:
+    app: external-mcp
+    component: mcp
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: external-mcp.agentic.kernow.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: external-mcp
+                port:
+                  number: 8000
