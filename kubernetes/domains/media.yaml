@@ -155,9 +155,7 @@ metadata:
   namespace: ai-platform
   labels:
     app: media-mcp
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
+    component: mcp
 spec:
   ingressClassName: traefik
   rules:
@@ -171,7 +169,3 @@ spec:
                 name: media-mcp
                 port:
                   number: 8000
-  tls:
-    - hosts:
-        - media-mcp.agentic.kernow.io
-      secretName: wildcard-agentic-kernow-io

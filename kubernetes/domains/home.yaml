@@ -141,9 +141,7 @@ metadata:
   namespace: ai-platform
   labels:
     app: home-mcp
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
+    component: mcp
 spec:
   ingressClassName: traefik
   rules:
@@ -157,7 +155,3 @@ spec:
                 name: home-mcp
                 port:
                   number: 8000
-  tls:
-    - hosts:
-        - home-mcp.agentic.kernow.io
-      secretName: wildcard-agentic-kernow-io
