@@ -35,12 +35,18 @@ mcp = FastMCP(
     stateless_http=True
 )
 
+
+def register_tools():
+    """Register all tools from submodules."""
+    homeassistant.register_tools(mcp)
+    tasmota.register_tools(mcp)
+    unifi.register_tools(mcp)
+    adguard.register_tools(mcp)
+    homepage.register_tools(mcp)
+
+
 # Register all tools
-homeassistant.register_tools(mcp)
-tasmota.register_tools(mcp)
-unifi.register_tools(mcp)
-adguard.register_tools(mcp)
-homepage.register_tools(mcp)
+register_tools()
 
 
 async def health_check(request):
@@ -108,17 +114,25 @@ async def ready_check(request):
 
 
 # Create Starlette app with health endpoints and MCP
-app = Starlette(
-    routes=[
-        Route("/health", health_check),
-        Route("/ready", ready_check),
-        Mount("/", app=mcp.get_asgi_app()),
-    ]
-)
+# Use http_app() for stateless HTTP MCP transport
+mcp_app = mcp.http_app()
+
+routes = [
+    Route("/health", health_check, methods=["GET"]),
+    Route("/ready", ready_check, methods=["GET"]),
+    Mount("/", app=mcp_app),
+]
+
+app = Starlette(routes=routes, lifespan=mcp_app.lifespan)
 
 
-if __name__ == "__main__":
+def main():
+    """Run the server."""
     port = int(os.environ.get("PORT", 8000))
     host = os.environ.get("HOST", "0.0.0.0")
     logger.info(f"Starting Home MCP server on {host}:{port}")
     uvicorn.run(app, host=host, port=port)
+
+
+if __name__ == "__main__":
+    main()
