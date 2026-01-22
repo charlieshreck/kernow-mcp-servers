@@ -1,0 +1,128 @@
+---
+# Observability MCP - Consolidated monitoring/alerting MCP
+# Replaces: keep-mcp, coroot-mcp, monitoring-mcp
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: observability-mcp-config
+  namespace: ai-platform
+  labels:
+    app: observability-mcp
+    component: mcp
+data:
+  # Keep
+  KEEP_URL: "http://keep.keep.svc.cluster.local:8080"
+  # Coroot
+  COROOT_URL: "http://coroot.monitoring.svc:8080"
+  COROOT_PROJECT: "default"
+  # VictoriaMetrics
+  VICTORIA_METRICS_URL: "http://10.30.0.20:30084"
+  # AlertManager
+  ALERTMANAGER_URL: "http://10.30.0.20:30083"
+  # Grafana
+  GRAFANA_URL: "http://10.30.0.20:30081"
+  GRAFANA_USER: "admin"
+  # Gatus
+  GATUS_URL: "http://10.30.0.20:30086"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: observability-mcp
+  namespace: ai-platform
+  labels:
+    app: observability-mcp
+    component: mcp
+    app.kubernetes.io/part-of: mcp-servers
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: observability-mcp
+  template:
+    metadata:
+      labels:
+        app: observability-mcp
+        component: mcp
+    spec:
+      containers:
+        - name: mcp-server
+          image: ghcr.io/charlieshreck/mcp-observability:latest
+          ports:
+            - containerPort: 8000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: observability-mcp-config
+          env:
+            - name: KEEP_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: observability-mcp-secrets
+                  key: KEEP_API_KEY
+                  optional: true
+            - name: GRAFANA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: observability-mcp-secrets
+                  key: GRAFANA_PASSWORD
+                  optional: true
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: observability-mcp
+  namespace: ai-platform
+  labels:
+    app: observability-mcp
+spec:
+  type: NodePort
+  ports:
+    - port: 8000
+      targetPort: 8000
+      nodePort: 31120  # New port for consolidated MCP
+      name: http
+  selector:
+    app: observability-mcp
+---
+# InfisicalSecret for sensitive values
+apiVersion: secrets.infisical.com/v1alpha1
+kind: InfisicalSecret
+metadata:
+  name: observability-mcp-secrets
+  namespace: ai-platform
+spec:
+  hostAPI: https://app.infisical.com/api
+  authentication:
+    universalAuth:
+      credentialsRef:
+        secretName: universal-auth-credentials
+        secretNamespace: infisical-operator-system
+      secretsScope:
+        projectSlug: agentic-homelab-wd-xab
+        envSlug: prod
+        secretsPath: /mcp/observability
+  managedSecretReference:
+    secretName: observability-mcp-secrets
+    secretNamespace: ai-platform
+    secretType: Opaque
+    creationPolicy: Owner
