@@ -60,15 +60,21 @@ spec:
           envFrom:
             - configMapRef:
                 name: infrastructure-mcp-config
-            - secretRef:
-                name: infrastructure-mcp-secrets
-            # Use existing MCP secrets for services that already have them
+            # Use individual MCP secrets per service (domain-aligned paths)
             - secretRef:
                 name: mcp-cloudflare
             - secretRef:
                 name: mcp-truenas-hdd
             - secretRef:
                 name: mcp-truenas-media
+            - secretRef:
+                name: mcp-proxmox
+            - secretRef:
+                name: mcp-opnsense
+            - secretRef:
+                name: mcp-adguard
+            - secretRef:
+                name: mcp-infisical
           volumeMounts:
             - name: kubeconfig-agentic
               mountPath: /kubeconfigs/agentic
@@ -138,29 +144,6 @@ subjects:
   - kind: ServiceAccount
     name: infrastructure-mcp
     namespace: ai-platform
----
-apiVersion: secrets.infisical.com/v1alpha1
-kind: InfisicalSecret
-metadata:
-  name: infrastructure-mcp-secrets
-  namespace: ai-platform
-spec:
-  hostAPI: https://app.infisical.com/api
-  resyncInterval: 300
-  authentication:
-    universalAuth:
-      credentialsRef:
-        secretName: universal-auth-credentials
-        secretNamespace: infisical-operator-system
-      secretsScope:
-        projectSlug: prod-homelab-y-nij
-        envSlug: prod
-        secretsPath: /mcp/infrastructure
-  managedSecretReference:
-    secretName: infrastructure-mcp-secrets
-    secretNamespace: ai-platform
-    secretType: Opaque
-    creationPolicy: Owner
 ---
 # Ingress for DNS-based access (HTTP for internal MCP access)
 apiVersion: networking.k8s.io/v1

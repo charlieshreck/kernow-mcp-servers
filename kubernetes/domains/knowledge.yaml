@@ -55,25 +55,25 @@ spec:
             - name: NEO4J_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: knowledge-mcp-secrets
+                  name: neo4j-credentials
                   key: NEO4J_PASSWORD
                   optional: true
             - name: VIKUNJA_API_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: knowledge-mcp-secrets
-                  key: VIKUNJA_API_TOKEN
+                  name: mcp-vikunja
+                  key: API_TOKEN
                   optional: true
             - name: OUTLINE_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: knowledge-mcp-secrets
-                  key: OUTLINE_API_KEY
+                  name: mcp-outline
+                  key: API_KEY
                   optional: true
             - name: QDRANT_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: knowledge-mcp-secrets
+                  name: qdrant-api-key
                   key: QDRANT_API_KEY
                   optional: true
           resources:
@@ -113,29 +113,6 @@ spec:
       name: http
   selector:
     app: knowledge-mcp
----
-# InfisicalSecret for sensitive values
-apiVersion: secrets.infisical.com/v1alpha1
-kind: InfisicalSecret
-metadata:
-  name: knowledge-mcp-secrets
-  namespace: ai-platform
-spec:
-  hostAPI: https://app.infisical.com/api
-  authentication:
-    universalAuth:
-      credentialsRef:
-        secretName: universal-auth-credentials
-        secretNamespace: infisical-operator-system
-      secretsScope:
-        projectSlug: prod-homelab-y-nij
-        envSlug: prod
-        secretsPath: /mcp/knowledge
-  managedSecretReference:
-    secretName: knowledge-mcp-secrets
-    secretNamespace: ai-platform
-    secretType: Opaque
-    creationPolicy: Owner
 ---
 # Ingress for DNS-based access
 apiVersion: networking.k8s.io/v1

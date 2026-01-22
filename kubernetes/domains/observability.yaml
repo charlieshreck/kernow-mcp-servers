@@ -58,14 +58,14 @@ spec:
             - name: KEEP_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: observability-mcp-secrets
-                  key: KEEP_API_KEY
+                  name: mcp-keep
+                  key: API_KEY
                   optional: true
             - name: GRAFANA_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: observability-mcp-secrets
-                  key: GRAFANA_PASSWORD
+                  name: mcp-monitoring-grafana
+                  key: PASSWORD
                   optional: true
           resources:
             requests:
@@ -103,29 +103,6 @@ spec:
       name: http
   selector:
     app: observability-mcp
----
-# InfisicalSecret for sensitive values
-apiVersion: secrets.infisical.com/v1alpha1
-kind: InfisicalSecret
-metadata:
-  name: observability-mcp-secrets
-  namespace: ai-platform
-spec:
-  hostAPI: https://app.infisical.com/api
-  authentication:
-    universalAuth:
-      credentialsRef:
-        secretName: universal-auth-credentials
-        secretNamespace: infisical-operator-system
-      secretsScope:
-        projectSlug: prod-homelab-y-nij
-        envSlug: prod
-        secretsPath: /mcp/observability
-  managedSecretReference:
-    secretName: observability-mcp-secrets
-    secretNamespace: ai-platform
-    secretType: Opaque
-    creationPolicy: Owner
 ---
 # Ingress for DNS-based access
 apiVersion: networking.k8s.io/v1
