@@ -13,7 +13,7 @@ data:
   # Keep
   KEEP_URL: "http://keep.keep.svc.cluster.local:8080"
   # Coroot
-  COROOT_URL: "http://coroot.monitoring.svc:8080"
+  COROOT_URL: "http://10.30.0.20:32702"
   COROOT_PROJECT: "default"
   # VictoriaMetrics
   VICTORIA_METRICS_URL: "http://10.30.0.20:30084"
