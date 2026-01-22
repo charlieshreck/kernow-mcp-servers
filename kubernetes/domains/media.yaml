@@ -1,0 +1,177 @@
+# Media MCP - Consolidated media management
+# Combines: plex-mcp, arr-suite-mcp
+# Endpoint: media-mcp.agentic.kernow.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: media-mcp
+  namespace: ai-platform
+  labels:
+    app: media-mcp
+    component: mcp
+    domain: media
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: media-mcp
+  template:
+    metadata:
+      labels:
+        app: media-mcp
+        component: mcp
+        domain: media
+    spec:
+      containers:
+        - name: media-mcp
+          image: ghcr.io/charlieshreck/media-mcp:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            # Server config
+            - name: PORT
+              value: "8000"
+            - name: HOST
+              value: "0.0.0.0"
+            # Plex
+            - name: PLEX_URL
+              value: "http://10.10.0.50:32400"
+            - name: PLEX_HOST
+              value: "10.10.0.50"
+            - name: PLEX_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-plex
+                  key: PLEX_TOKEN
+            # Sonarr
+            - name: SONARR_URL
+              value: "https://sonarr.kernow.io"
+            - name: SONARR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-sonarr
+                  key: API_KEY
+            # Radarr
+            - name: RADARR_URL
+              value: "https://radarr.kernow.io"
+            - name: RADARR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-radarr
+                  key: API_KEY
+            # Prowlarr
+            - name: PROWLARR_URL
+              value: "https://prowlarr.kernow.io"
+            - name: PROWLARR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-prowlarr
+                  key: API_KEY
+            # Overseerr
+            - name: OVERSEERR_URL
+              value: "https://overseerr.kernow.io"
+            - name: OVERSEERR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-overseerr
+                  key: API_KEY
+            # Tautulli
+            - name: TAUTULLI_URL
+              value: "https://tautulli.kernow.io"
+            - name: TAUTULLI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-tautulli
+                  key: API_KEY
+            # Transmission
+            - name: TRANSMISSION_URL
+              value: "https://transmission.kernow.io"
+            - name: TRANSMISSION_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-transmission
+                  key: TRANSMISSION_RPC_USERNAME
+            - name: TRANSMISSION_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-transmission
+                  key: TRANSMISSION_RPC_PASSWORD
+            # SABnzbd
+            - name: SABNZBD_URL
+              value: "https://sabnzbd.kernow.io"
+            - name: SABNZBD_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-sabnzbd
+                  key: API_KEY
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: media-mcp
+  namespace: ai-platform
+  labels:
+    app: media-mcp
+    component: mcp
+    domain: media
+spec:
+  type: NodePort
+  selector:
+    app: media-mcp
+  ports:
+    - port: 8000
+      targetPort: 8000
+      nodePort: 31123
+      name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: media-mcp
+  namespace: ai-platform
+  labels:
+    app: media-mcp
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: media-mcp.agentic.kernow.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: media-mcp
+                port:
+                  number: 8000
+  tls:
+    - hosts:
+        - media-mcp.agentic.kernow.io
+      secretName: wildcard-agentic-kernow-io
