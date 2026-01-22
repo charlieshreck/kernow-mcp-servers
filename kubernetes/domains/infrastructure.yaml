@@ -95,6 +95,7 @@ spec:
               port: 8000
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 10
       volumes:
         - name: kubeconfig-agentic
           secret:
