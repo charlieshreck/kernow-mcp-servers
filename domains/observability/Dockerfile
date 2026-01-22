@@ -13,9 +13,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy shared utilities first (for Docker layer caching)
 COPY shared/kernow_mcp_common /app/shared/kernow_mcp_common
 COPY shared/pyproject.toml /app/shared/
+COPY shared/README.md /app/shared/
 
 # Copy domain-specific code
 COPY domains/observability/pyproject.toml .
+COPY domains/observability/README.md .
 COPY domains/observability/src ./src
 
 # Install dependencies
