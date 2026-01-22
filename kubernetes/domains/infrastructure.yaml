@@ -162,14 +162,15 @@ spec:
     secretType: Opaque
     creationPolicy: Owner
 ---
+# Ingress for DNS-based access (HTTP for internal MCP access)
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: infrastructure-mcp
   namespace: ai-platform
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
+  labels:
+    app: infrastructure-mcp
+    component: mcp
 spec:
   ingressClassName: traefik
   rules:
@@ -183,6 +184,3 @@ spec:
                 name: infrastructure-mcp
                 port:
                   number: 8000
-  tls:
-    - hosts:
-        - infrastructure-mcp.agentic.kernow.io
