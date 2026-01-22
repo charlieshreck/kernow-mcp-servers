@@ -1,26 +1,40 @@
+# Infrastructure MCP Server
+# Consolidated MCP for Kubernetes, Proxmox, TrueNAS, Cloudflare, OPNsense, and secrets management
+
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install kubectl
-RUN apt-get update && apt-get install -y curl && \
-    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
-    install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl && \
-    rm kubectl && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+# Install system dependencies including kubectl
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+    && install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl \
+    && rm kubectl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY pyproject.toml .
+# Copy domain-specific code (using repo root context)
+COPY domains/infrastructure/pyproject.toml .
+COPY domains/infrastructure/README.md .
+COPY domains/infrastructure/src ./src
+
+# Install dependencies
 RUN pip install --no-cache-dir .
 
-# Copy source code
-COPY src/ src/
-RUN pip install --no-cache-dir -e .
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
 
-# Create non-root user
+# Run as non-root
 RUN useradd -m -u 1000 mcp
 USER mcp
 
+# Expose port
 EXPOSE 8000
 
-CMD ["infrastructure-mcp"]
+# Environment defaults
+ENV PORT=8000
+ENV HOST=0.0.0.0
+
+# Run the server
+CMD ["python", "-m", "infrastructure_mcp.server"]
