@@ -62,6 +62,13 @@ spec:
                 name: infrastructure-mcp-config
             - secretRef:
                 name: infrastructure-mcp-secrets
+            # Use existing MCP secrets for services that already have them
+            - secretRef:
+                name: mcp-cloudflare
+            - secretRef:
+                name: mcp-truenas-hdd
+            - secretRef:
+                name: mcp-truenas-media
           volumeMounts:
             - name: kubeconfig-agentic
               mountPath: /kubeconfigs/agentic

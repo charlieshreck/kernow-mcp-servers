@@ -58,11 +58,11 @@ spec:
                   name: knowledge-mcp-secrets
                   key: NEO4J_PASSWORD
                   optional: true
-            - name: VIKUNJA_TOKEN
+            - name: VIKUNJA_API_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: knowledge-mcp-secrets
-                  key: VIKUNJA_TOKEN
+                  key: VIKUNJA_API_TOKEN
                   optional: true
             - name: OUTLINE_API_KEY
               valueFrom:
@@ -127,7 +127,7 @@ spec:
         secretName: universal-auth-credentials
         secretNamespace: infisical-operator-system
       secretsScope:
-        projectSlug: prod-homelab-y-nij
+        projectSlug: agentic-lab-nxcc
         envSlug: prod
         secretsPath: /mcp/knowledge
   managedSecretReference:
