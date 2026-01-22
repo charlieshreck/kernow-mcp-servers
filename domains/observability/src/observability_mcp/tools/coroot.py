@@ -3,7 +3,7 @@
 import os
 import json
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 
 import httpx
 from fastmcp import FastMCP
@@ -12,8 +12,11 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 # Configuration
-COROOT_URL = os.environ.get("COROOT_URL", "http://coroot.monitoring.svc:8080")
-COROOT_PROJECT = os.environ.get("COROOT_PROJECT", "default")
+COROOT_URL = os.environ.get("COROOT_URL", "http://10.30.0.20:32702")
+COROOT_PROJECT_NAME = os.environ.get("COROOT_PROJECT", "all-clusters")
+
+# Cache for project name -> ID mapping
+_PROJECT_ID_CACHE: Dict[str, str] = {}
 
 
 class ServiceInput(BaseModel):
@@ -26,11 +29,30 @@ class TimeRangeInput(BaseModel):
     severity: Optional[str] = Field(default=None, description="Filter: critical, warning, info")
 
 
-async def _coroot_api(endpoint: str) -> Dict[str, Any]:
-    """Make request to Coroot API."""
+async def _get_project_id(project_name: str) -> str:
+    """Resolve project name to internal ID. Coroot API uses IDs not names."""
+    if project_name in _PROJECT_ID_CACHE:
+        return _PROJECT_ID_CACHE[project_name]
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{COROOT_URL}/api/user")
+            response.raise_for_status()
+            data = response.json()
+            for proj in data.get("projects", []):
+                _PROJECT_ID_CACHE[proj["name"]] = proj["id"]
+            return _PROJECT_ID_CACHE.get(project_name, project_name)
+    except Exception as e:
+        logger.error(f"Failed to get project ID: {e}")
+        return project_name  # Fallback to name
+
+
+async def _coroot_api(endpoint: str, method: str = "GET", **kwargs) -> Dict[str, Any]:
+    """Make request to Coroot API with project ID resolution."""
+    project_id = await _get_project_id(COROOT_PROJECT_NAME)
     async with httpx.AsyncClient(timeout=30.0) as client:
-        url = f"{COROOT_URL}/api{endpoint}"
-        response = await client.get(url)
+        url = f"{COROOT_URL}/api/project/{project_id}/{endpoint}"
+        logger.info(f"Coroot request: {method} {url}")
+        response = await client.request(method, url, **kwargs)
         response.raise_for_status()
         return response.json() if response.text else {}
 
@@ -49,7 +71,7 @@ def register_tools(mcp: FastMCP):
     async def coroot_get_service_metrics(params: ServiceInput) -> str:
         """Get metrics for a specific service (CPU, memory, latency, error rate)."""
         try:
-            result = await _coroot_api(f"/project/{COROOT_PROJECT}/app/{params.namespace}:{params.service}")
+            result = await _coroot_api(f"app/{params.namespace}:{params.service}")
             return json.dumps(result, indent=2)
         except Exception as e:
             return _handle_error(e)
@@ -58,7 +80,7 @@ def register_tools(mcp: FastMCP):
     async def coroot_get_recent_anomalies(params: TimeRangeInput) -> str:
         """Get recent anomalies detected by Coroot (critical, warning, info)."""
         try:
-            result = await _coroot_api(f"/project/{COROOT_PROJECT}/incidents")
+            result = await _coroot_api("incidents")
             incidents = result if isinstance(result, list) else result.get("incidents", [])
 
             if params.severity:
@@ -79,7 +101,7 @@ def register_tools(mcp: FastMCP):
     async def coroot_get_service_dependencies(params: ServiceInput) -> str:
         """Get upstream and downstream service dependencies."""
         try:
-            result = await _coroot_api(f"/project/{COROOT_PROJECT}/app/{params.namespace}:{params.service}/map")
+            result = await _coroot_api(f"app/{params.namespace}:{params.service}/map")
             return json.dumps(result, indent=2)
         except Exception as e:
             return _handle_error(e)
@@ -88,7 +110,7 @@ def register_tools(mcp: FastMCP):
     async def coroot_get_alerts(status: str = "firing") -> str:
         """Get current alerts from Coroot (firing, resolved, all)."""
         try:
-            result = await _coroot_api(f"/project/{COROOT_PROJECT}/alerts")
+            result = await _coroot_api("alerts")
             alerts = result if isinstance(result, list) else result.get("alerts", [])
 
             if status != "all":
@@ -108,7 +130,31 @@ def register_tools(mcp: FastMCP):
     async def coroot_get_infrastructure_overview() -> str:
         """Get overview of all services and their health status."""
         try:
-            result = await _coroot_api(f"/project/{COROOT_PROJECT}/overview")
-            return json.dumps(result, indent=2)
+            # Use health view for service status
+            result = await _coroot_api("overview/health")
+
+            overview = {"total_services": 0, "healthy": 0, "warning": 0, "critical": 0, "services": {}}
+
+            # Parse the health overview response
+            context = result.get("context", {})
+            apps = context.get("search", {}).get("applications", [])
+
+            for app in apps:
+                app_id = app.get("id", "unknown")
+                parts = app_id.split(":")
+                name = parts[-1] if parts else app_id
+                status = app.get("status", "unknown")
+
+                overview["total_services"] += 1
+                if status == "ok":
+                    overview["healthy"] += 1
+                elif status == "warning":
+                    overview["warning"] += 1
+                elif status in ("critical", "error"):
+                    overview["critical"] += 1
+
+                overview["services"][name] = {"health": status, "id": app_id}
+
+            return json.dumps(overview, indent=2)
         except Exception as e:
             return _handle_error(e)

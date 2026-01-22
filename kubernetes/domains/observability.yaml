@@ -14,7 +14,7 @@ data:
   KEEP_URL: "http://keep.keep.svc.cluster.local:8080"
   # Coroot
   COROOT_URL: "http://10.30.0.20:32702"
-  COROOT_PROJECT: "default"
+  COROOT_PROJECT: "all-clusters"
   # VictoriaMetrics
   VICTORIA_METRICS_URL: "http://10.30.0.20:30084"
   # AlertManager
@@ -126,3 +126,26 @@ spec:
     secretNamespace: ai-platform
     secretType: Opaque
     creationPolicy: Owner
+---
+# Ingress for DNS-based access
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: observability-mcp
+  namespace: ai-platform
+  labels:
+    app: observability-mcp
+    component: mcp
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: observability-mcp.agentic.kernow.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: observability-mcp
+                port:
+                  number: 8000
