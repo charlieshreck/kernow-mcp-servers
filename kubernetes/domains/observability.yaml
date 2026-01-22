@@ -99,7 +99,7 @@ spec:
   ports:
     - port: 8000
       targetPort: 8000
-      nodePort: 31120  # New port for consolidated MCP
+      nodePort: 31121  # Consolidated observability MCP
       name: http
   selector:
     app: observability-mcp

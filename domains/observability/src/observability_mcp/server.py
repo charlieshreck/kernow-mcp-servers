@@ -76,10 +76,13 @@ async def ready(request):
 
 
 # Create Starlette app with routes
+# Use http_app() for stateless HTTP MCP transport
+mcp_app = mcp.http_app()
+
 routes = [
     Route("/health", health, methods=["GET"]),
     Route("/ready", ready, methods=["GET"]),
-    Mount("/", app=mcp.sse_app()),
+    Mount("/", app=mcp_app),
 ]
 
 app = Starlette(routes=routes)
