@@ -6,9 +6,13 @@ FROM mcr.microsoft.com/playwright/python:v1.49.0-jammy
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (including lxml build deps)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    libxml2-dev \
+    libxslt1-dev \
+    gcc \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy shared utilities first (for Docker layer caching)
