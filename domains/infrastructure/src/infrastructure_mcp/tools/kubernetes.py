@@ -537,41 +537,62 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     async def get_cluster_health() -> dict:
         """Get overall cluster health summary."""
-        nodes = await kubectl_get_nodes()
-        pods = await kubectl_get_pods(namespace="default", all_namespaces=True)
-        events = await kubectl_get_events(namespace="default", limit=10, warning_only=True)
+        errors = []
 
-        # Filter out error dicts that don't have expected keys
-        valid_nodes = [n for n in nodes if "error" not in n]
-        valid_pods = [p for p in pods if "error" not in p]
-        valid_events = [e for e in events if "error" not in e]
+        # Get nodes directly (don't call MCP-decorated functions)
+        stdout, stderr, rc = run_kubectl(["get", "nodes", "-o", "json"])
+        if rc != 0:
+            errors.append(f"Node query: {stderr}")
+            nodes = []
+        else:
+            data = parse_json_output(stdout)
+            nodes = []
+            for node in data.get("items", []):
+                conditions = {c["type"]: c["status"] for c in node["status"].get("conditions", [])}
+                nodes.append({
+                    "name": node["metadata"]["name"],
+                    "ready": conditions.get("Ready") == "True"
+                })
 
-        # Check for errors in responses
-        node_errors = [n.get("error") for n in nodes if "error" in n]
-        pod_errors = [p.get("error") for p in pods if "error" in p]
+        # Get pods directly
+        stdout, stderr, rc = run_kubectl(["get", "pods", "-A", "-o", "json"])
+        if rc != 0:
+            errors.append(f"Pod query: {stderr}")
+            pods = []
+        else:
+            data = parse_json_output(stdout)
+            pods = []
+            for pod in data.get("items", []):
+                pods.append({
+                    "status": pod["status"]["phase"],
+                    "ready": all(c.get("ready", False) for c in pod["status"].get("containerStatuses", []))
+                })
 
-        unhealthy_pods = [p for p in valid_pods if not p.get("ready") or p.get("status") != "Running"]
+        # Get warning events directly
+        stdout, stderr, rc = run_kubectl(["get", "events", "-A", "--field-selector=type=Warning", "-o", "json"])
+        if rc != 0:
+            warning_count = 0
+        else:
+            data = parse_json_output(stdout)
+            warning_count = min(len(data.get("items", [])), 10)
+
+        unhealthy_pods = [p for p in pods if not p.get("ready") or p.get("status") != "Running"]
 
         result = {
             "nodes": {
-                "total": len(valid_nodes),
-                "ready": sum(1 for n in valid_nodes if n.get("ready"))
+                "total": len(nodes),
+                "ready": sum(1 for n in nodes if n.get("ready"))
             },
             "pods": {
-                "total": len(valid_pods),
-                "running": len([p for p in valid_pods if p.get("status") == "Running"]),
+                "total": len(pods),
+                "running": len([p for p in pods if p.get("status") == "Running"]),
                 "unhealthy": len(unhealthy_pods)
             },
-            "recent_warnings": len(valid_events),
-            "healthy": len(unhealthy_pods) == 0 and all(n.get("ready") for n in valid_nodes) if valid_nodes else False
+            "recent_warnings": warning_count,
+            "healthy": len(unhealthy_pods) == 0 and all(n.get("ready") for n in nodes) if nodes else False
         }
 
-        # Include errors if any occurred
-        if node_errors or pod_errors:
-            result["errors"] = []
-            if node_errors:
-                result["errors"].append(f"Node query: {node_errors[0]}")
-            if pod_errors:
-                result["errors"].append(f"Pod query: {pod_errors[0]}")
+        if errors:
+            result["errors"] = errors
 
         return result

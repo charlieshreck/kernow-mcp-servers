@@ -55,13 +55,21 @@ async def _coroot_api(endpoint: str, method: str = "GET", **kwargs) -> Dict[str,
             logger.info(f"Coroot request: {method} {url}")
             response = await client.request(method, url, **kwargs)
             response.raise_for_status()
-            return response.json() if response.text else {}
+            # Handle empty responses gracefully
+            text = response.text.strip() if response.text else ""
+            if not text:
+                logger.debug(f"Coroot API returned empty response for {endpoint}")
+                return {}
+            return json.loads(text)
     except httpx.HTTPStatusError as e:
         logger.error(f"Coroot API error: {e.response.status_code} for {endpoint}")
         raise
     except httpx.TimeoutException:
         logger.error(f"Coroot API timeout for {endpoint}")
         raise
+    except json.JSONDecodeError as e:
+        logger.error(f"Coroot API invalid JSON for {endpoint}: {e}")
+        return {}
     except Exception as e:
         logger.error(f"Coroot API request failed: {type(e).__name__}: {e}")
         raise
