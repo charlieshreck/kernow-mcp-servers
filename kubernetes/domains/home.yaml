@@ -84,9 +84,12 @@ spec:
               value: "/data/tasmota-devices.json"
             - name: TASMOTA_COMMAND_TIMEOUT
               value: "10.0"
-            # Homepage
+            # Homepage (external URL - Homepage is in prod cluster)
             - name: HOMEPAGE_HOST
-              value: "http://homepage.default.svc:3000"
+              value: "https://homepage.kernow.io"
+            # Tasmota devices (pre-seeded from network scan)
+            - name: TASMOTA_DEVICES
+              value: "10.10.0.191,10.10.0.192,10.10.0.193,10.10.0.195,10.10.0.204,10.10.0.209,10.10.0.228,10.10.0.230,10.10.0.231,10.10.0.232,10.10.0.233,10.10.0.234,10.10.0.235,10.10.0.236,10.10.0.237,10.10.0.238,10.10.0.239,10.10.0.240,10.10.0.241,10.10.0.243,10.10.0.244,10.10.0.245,10.10.0.246,10.10.0.247,10.10.0.248,10.10.0.249"
           volumeMounts:
             - name: tasmota-data
               mountPath: /data
