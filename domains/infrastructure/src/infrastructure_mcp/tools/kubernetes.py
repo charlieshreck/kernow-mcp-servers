@@ -490,7 +490,8 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     async def argocd_get_applications(namespace: str = "argocd") -> List[dict]:
         """Get ArgoCD applications with sync status."""
-        stdout, stderr, rc = run_kubectl(["get", "applications.argoproj.io", "-n", namespace, "-o", "json"])
+        # ArgoCD runs in prod cluster, not agentic
+        stdout, stderr, rc = run_kubectl(["get", "applications.argoproj.io", "-n", namespace, "-o", "json"], cluster="prod")
         if rc != 0:
             return [{"error": stderr}]
 
@@ -507,8 +508,9 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     async def argocd_sync_application(app_name: str, namespace: str = "argocd") -> str:
         """Trigger sync for an ArgoCD application."""
+        # ArgoCD runs in prod cluster, not agentic
         patch = '{"operation": {"initiatedBy": {"username": "infrastructure-mcp"}, "sync": {"prune": true}}}'
-        stdout, stderr, rc = run_kubectl(["patch", "application", app_name, "-n", namespace, "--type", "merge", "-p", patch])
+        stdout, stderr, rc = run_kubectl(["patch", "application", app_name, "-n", namespace, "--type", "merge", "-p", patch], cluster="prod")
         return f"Triggered sync for {app_name}" if rc == 0 else f"Error: {stderr}"
 
     # =========================================================================
@@ -536,21 +538,40 @@ def register_tools(mcp: FastMCP):
     async def get_cluster_health() -> dict:
         """Get overall cluster health summary."""
         nodes = await kubectl_get_nodes()
-        pods = await kubectl_get_pods(namespace="", all_namespaces=True)
-        events = await kubectl_get_events(namespace="", limit=10, warning_only=True)
+        pods = await kubectl_get_pods(namespace="default", all_namespaces=True)
+        events = await kubectl_get_events(namespace="default", limit=10, warning_only=True)
 
-        unhealthy_pods = [p for p in pods if not p.get("ready") or p.get("status") != "Running"]
+        # Filter out error dicts that don't have expected keys
+        valid_nodes = [n for n in nodes if "error" not in n]
+        valid_pods = [p for p in pods if "error" not in p]
+        valid_events = [e for e in events if "error" not in e]
 
-        return {
+        # Check for errors in responses
+        node_errors = [n.get("error") for n in nodes if "error" in n]
+        pod_errors = [p.get("error") for p in pods if "error" in p]
+
+        unhealthy_pods = [p for p in valid_pods if not p.get("ready") or p.get("status") != "Running"]
+
+        result = {
             "nodes": {
-                "total": len(nodes),
-                "ready": sum(1 for n in nodes if n.get("ready"))
+                "total": len(valid_nodes),
+                "ready": sum(1 for n in valid_nodes if n.get("ready"))
             },
             "pods": {
-                "total": len(pods),
-                "running": len([p for p in pods if p.get("status") == "Running"]),
+                "total": len(valid_pods),
+                "running": len([p for p in valid_pods if p.get("status") == "Running"]),
                 "unhealthy": len(unhealthy_pods)
             },
-            "recent_warnings": len(events),
-            "healthy": len(unhealthy_pods) == 0 and all(n.get("ready") for n in nodes)
+            "recent_warnings": len(valid_events),
+            "healthy": len(unhealthy_pods) == 0 and all(n.get("ready") for n in valid_nodes) if valid_nodes else False
         }
+
+        # Include errors if any occurred
+        if node_errors or pod_errors:
+            result["errors"] = []
+            if node_errors:
+                result["errors"].append(f"Node query: {node_errors[0]}")
+            if pod_errors:
+                result["errors"].append(f"Pod query: {pod_errors[0]}")
+
+        return result

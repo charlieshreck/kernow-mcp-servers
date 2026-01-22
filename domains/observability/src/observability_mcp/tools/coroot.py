@@ -49,12 +49,22 @@ async def _get_project_id(project_name: str) -> str:
 async def _coroot_api(endpoint: str, method: str = "GET", **kwargs) -> Dict[str, Any]:
     """Make request to Coroot API with project ID resolution."""
     project_id = await _get_project_id(COROOT_PROJECT_NAME)
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        url = f"{COROOT_URL}/api/project/{project_id}/{endpoint}"
-        logger.info(f"Coroot request: {method} {url}")
-        response = await client.request(method, url, **kwargs)
-        response.raise_for_status()
-        return response.json() if response.text else {}
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            url = f"{COROOT_URL}/api/project/{project_id}/{endpoint}"
+            logger.info(f"Coroot request: {method} {url}")
+            response = await client.request(method, url, **kwargs)
+            response.raise_for_status()
+            return response.json() if response.text else {}
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Coroot API error: {e.response.status_code} for {endpoint}")
+        raise
+    except httpx.TimeoutException:
+        logger.error(f"Coroot API timeout for {endpoint}")
+        raise
+    except Exception as e:
+        logger.error(f"Coroot API request failed: {type(e).__name__}: {e}")
+        raise
 
 
 def _handle_error(e: Exception) -> str:
