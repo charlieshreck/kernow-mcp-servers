@@ -117,7 +117,7 @@ spec:
   ports:
     - port: 8000
       targetPort: 8000
-      nodePort: 31121
+      nodePort: 31126
 ---
 apiVersion: v1
 kind: ServiceAccount

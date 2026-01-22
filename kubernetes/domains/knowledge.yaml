@@ -108,7 +108,7 @@ spec:
   ports:
     - port: 8000
       targetPort: 8000
-      nodePort: 31122  # Consolidated knowledge MCP
+      nodePort: 31125  # Consolidated knowledge MCP (new port)
       name: http
   selector:
     app: knowledge-mcp
