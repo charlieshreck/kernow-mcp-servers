@@ -1,0 +1,160 @@
+---
+# Knowledge MCP - Consolidated semantic search, graph, wiki, and task management
+# Replaces: knowledge-mcp, neo4j-mcp, outline-mcp, vikunja-mcp
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: knowledge-mcp-config
+  namespace: ai-platform
+  labels:
+    app: knowledge-mcp
+    component: mcp
+data:
+  # Qdrant
+  QDRANT_URL: "http://qdrant.ai-platform.svc.cluster.local:6333"
+  OLLAMA_URL: "http://ollama.ai-platform.svc.cluster.local:11434"
+  EMBEDDING_MODEL: "nomic-embed-text"
+  # Neo4j
+  NEO4J_URL: "http://neo4j.ai-platform.svc.cluster.local:7474"
+  NEO4J_USER: "neo4j"
+  # Vikunja
+  VIKUNJA_URL: "http://vikunja.vikunja.svc.cluster.local:8080"
+  # Outline
+  OUTLINE_URL: "http://outline.outline.svc.cluster.local"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: knowledge-mcp
+  namespace: ai-platform
+  labels:
+    app: knowledge-mcp
+    component: mcp
+    app.kubernetes.io/part-of: mcp-servers
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: knowledge-mcp
+  template:
+    metadata:
+      labels:
+        app: knowledge-mcp
+        component: mcp
+    spec:
+      containers:
+        - name: mcp-server
+          image: ghcr.io/charlieshreck/mcp-knowledge:latest
+          ports:
+            - containerPort: 8000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: knowledge-mcp-config
+          env:
+            - name: NEO4J_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: knowledge-mcp-secrets
+                  key: NEO4J_PASSWORD
+                  optional: true
+            - name: VIKUNJA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: knowledge-mcp-secrets
+                  key: VIKUNJA_TOKEN
+                  optional: true
+            - name: OUTLINE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: knowledge-mcp-secrets
+                  key: OUTLINE_API_KEY
+                  optional: true
+            - name: QDRANT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: knowledge-mcp-secrets
+                  key: QDRANT_API_KEY
+                  optional: true
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: knowledge-mcp
+  namespace: ai-platform
+  labels:
+    app: knowledge-mcp
+spec:
+  type: NodePort
+  ports:
+    - port: 8000
+      targetPort: 8000
+      nodePort: 31122  # Consolidated knowledge MCP
+      name: http
+  selector:
+    app: knowledge-mcp
+---
+# InfisicalSecret for sensitive values
+apiVersion: secrets.infisical.com/v1alpha1
+kind: InfisicalSecret
+metadata:
+  name: knowledge-mcp-secrets
+  namespace: ai-platform
+spec:
+  hostAPI: https://app.infisical.com/api
+  authentication:
+    universalAuth:
+      credentialsRef:
+        secretName: universal-auth-credentials
+        secretNamespace: infisical-operator-system
+      secretsScope:
+        projectSlug: prod-homelab-y-nij
+        envSlug: prod
+        secretsPath: /mcp/knowledge
+  managedSecretReference:
+    secretName: knowledge-mcp-secrets
+    secretNamespace: ai-platform
+    secretType: Opaque
+    creationPolicy: Owner
+---
+# Ingress for DNS-based access
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: knowledge-mcp
+  namespace: ai-platform
+  labels:
+    app: knowledge-mcp
+    component: mcp
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: knowledge-mcp.agentic.kernow.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: knowledge-mcp
+                port:
+                  number: 8000

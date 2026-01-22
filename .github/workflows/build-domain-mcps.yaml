@@ -36,9 +36,8 @@ jobs:
           - external
           - media
           - home
-          # Future domains (uncomment when ready):
-          # - infrastructure
-          # - knowledge
+          - knowledge
+          - infrastructure
 
     steps:
       - name: Checkout repository
@@ -88,6 +87,8 @@ jobs:
           - external
           - media
           - home
+          - knowledge
+          - infrastructure
 
     steps:
       - name: Checkout repository

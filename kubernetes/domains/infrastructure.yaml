@@ -1,0 +1,180 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: infrastructure-mcp-config
+  namespace: ai-platform
+data:
+  # Kubernetes clusters
+  KUBECONFIG_AGENTIC: "/kubeconfigs/agentic/kubeconfig"
+  KUBECONFIG_PROD: "/kubeconfigs/prod/kubeconfig"
+  DEFAULT_CLUSTER: "agentic"
+
+  # Proxmox
+  PROXMOX_URL: "https://10.10.0.6:8006"
+
+  # TrueNAS
+  TRUENAS_HDD_URL: "https://10.10.0.51"
+  TRUENAS_MEDIA_URL: "https://10.10.0.52"
+
+  # Cloudflare
+  CLOUDFLARE_API_BASE: "https://api.cloudflare.com/client/v4"
+
+  # OPNsense
+  OPNSENSE_URL: "https://10.10.0.1"
+
+  # AdGuard Home
+  ADGUARD_URL: "http://10.10.0.1:3000"
+  ADGUARD_USERNAME: "admin"
+
+  # Infisical
+  INFISICAL_URL: "https://app.infisical.com"
+  INFISICAL_ENVIRONMENT: "prod"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: infrastructure-mcp
+  namespace: ai-platform
+  labels:
+    app: infrastructure-mcp
+    domain: infrastructure
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: infrastructure-mcp
+  template:
+    metadata:
+      labels:
+        app: infrastructure-mcp
+        domain: infrastructure
+    spec:
+      serviceAccountName: infrastructure-mcp
+      containers:
+        - name: infrastructure-mcp
+          image: ghcr.io/charlieshreck/mcp-infrastructure:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: infrastructure-mcp-config
+            - secretRef:
+                name: infrastructure-mcp-secrets
+          volumeMounts:
+            - name: kubeconfig-agentic
+              mountPath: /kubeconfigs/agentic
+              readOnly: true
+            - name: kubeconfig-prod
+              mountPath: /kubeconfigs/prod
+              readOnly: true
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: kubeconfig-agentic
+          secret:
+            secretName: kubeconfig-agentic
+        - name: kubeconfig-prod
+          secret:
+            secretName: kubeconfig-prod
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: infrastructure-mcp
+  namespace: ai-platform
+  labels:
+    app: infrastructure-mcp
+spec:
+  type: NodePort
+  selector:
+    app: infrastructure-mcp
+  ports:
+    - port: 8000
+      targetPort: 8000
+      nodePort: 31121
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: infrastructure-mcp
+  namespace: ai-platform
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: infrastructure-mcp-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: infrastructure-mcp
+    namespace: ai-platform
+---
+apiVersion: secrets.infisical.com/v1alpha1
+kind: InfisicalSecret
+metadata:
+  name: infrastructure-mcp-secrets
+  namespace: ai-platform
+spec:
+  hostAPI: https://app.infisical.com/api
+  resyncInterval: 300
+  authentication:
+    universalAuth:
+      credentialsRef:
+        secretName: universal-auth-credentials
+        secretNamespace: infisical-operator-system
+      secretsScope:
+        projectSlug: agentic-lab-nxcc
+        envSlug: prod
+        secretsPath: /mcp/infrastructure
+  managedSecretReference:
+    secretName: infrastructure-mcp-secrets
+    secretNamespace: ai-platform
+    secretType: Opaque
+    creationPolicy: Owner
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: infrastructure-mcp
+  namespace: ai-platform
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: infrastructure-mcp.agentic.kernow.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: infrastructure-mcp
+                port:
+                  number: 8000
+  tls:
+    - hosts:
+        - infrastructure-mcp.agentic.kernow.io

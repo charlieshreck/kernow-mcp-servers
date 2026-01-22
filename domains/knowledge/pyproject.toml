@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "knowledge-mcp"
+version = "1.0.0"
+description = "Consolidated MCP for semantic search, graph queries, wiki, and task management"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=2.7.0",
+    "httpx>=0.28.0",
+    "uvicorn>=0.34.0",
+    "starlette>=0.40.0",
+    "pydantic>=2.0.0",
+]
+
+[project.scripts]
+knowledge-mcp = "knowledge_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/knowledge_mcp"]
