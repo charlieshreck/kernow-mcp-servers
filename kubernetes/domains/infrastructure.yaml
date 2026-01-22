@@ -152,7 +152,7 @@ spec:
         secretName: universal-auth-credentials
         secretNamespace: infisical-operator-system
       secretsScope:
-        projectSlug: agentic-lab-nxcc
+        projectSlug: prod-homelab-y-nij
         envSlug: prod
         secretsPath: /mcp/infrastructure
   managedSecretReference:
