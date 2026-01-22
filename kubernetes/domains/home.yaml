@@ -1,0 +1,163 @@
+# Home MCP - Consolidated smart home, network, and IoT management
+# Combines: home-assistant-mcp, tasmota-mcp, unifi-mcp, adguard-mcp, homepage-mcp
+# Endpoint: home-mcp.agentic.kernow.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: home-mcp
+  namespace: ai-platform
+  labels:
+    app: home-mcp
+    component: mcp
+    domain: home
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: home-mcp
+  template:
+    metadata:
+      labels:
+        app: home-mcp
+        component: mcp
+        domain: home
+    spec:
+      containers:
+        - name: home-mcp
+          image: ghcr.io/charlieshreck/mcp-home:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            # Server config
+            - name: PORT
+              value: "8000"
+            - name: HOST
+              value: "0.0.0.0"
+            # Home Assistant
+            - name: HA_URL
+              value: "https://homeassistant.kernow.io"
+            - name: HA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-homeassistant
+                  key: API_KEY
+            # UniFi
+            - name: UNIFI_HOST
+              value: "https://10.10.0.51:11443"
+            - name: UNIFI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-unifi
+                  key: UNIFI_API_KEY
+            - name: UNIFI_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-unifi
+                  key: UNIFI_USER
+                  optional: true
+            - name: UNIFI_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-unifi
+                  key: UNIFI_PASSWORD
+                  optional: true
+            - name: UNIFI_SITE
+              value: "default"
+            # AdGuard
+            - name: ADGUARD_HOST
+              value: "http://10.10.0.1:3000"
+            - name: ADGUARD_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-adguard
+                  key: username
+            - name: ADGUARD_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-adguard
+                  key: password
+            # Tasmota
+            - name: TASMOTA_DEVICES_FILE
+              value: "/data/tasmota-devices.json"
+            - name: TASMOTA_COMMAND_TIMEOUT
+              value: "10.0"
+            # Homepage
+            - name: HOMEPAGE_HOST
+              value: "http://homepage.default.svc:3000"
+          volumeMounts:
+            - name: tasmota-data
+              mountPath: /data
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+      volumes:
+        - name: tasmota-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: home-mcp
+  namespace: ai-platform
+  labels:
+    app: home-mcp
+    component: mcp
+    domain: home
+spec:
+  type: NodePort
+  selector:
+    app: home-mcp
+  ports:
+    - port: 8000
+      targetPort: 8000
+      nodePort: 31124
+      name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: home-mcp
+  namespace: ai-platform
+  labels:
+    app: home-mcp
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: home-mcp.agentic.kernow.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: home-mcp
+                port:
+                  number: 8000
+  tls:
+    - hosts:
+        - home-mcp.agentic.kernow.io
+      secretName: wildcard-agentic-kernow-io

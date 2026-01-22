@@ -35,8 +35,8 @@ jobs:
           - observability
           - external
           - media
+          - home
           # Future domains (uncomment when ready):
-          # - home
           # - infrastructure
           # - knowledge
 
@@ -87,6 +87,7 @@ jobs:
           - observability
           - external
           - media
+          - home
 
     steps:
       - name: Checkout repository
