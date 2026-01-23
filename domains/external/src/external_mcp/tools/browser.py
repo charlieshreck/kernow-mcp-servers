@@ -77,9 +77,10 @@ class BrowserManager:
         browser_launcher = getattr(self.playwright, BROWSER_TYPE)
         # Parse browser args from environment
         launch_args = [arg.strip() for arg in BROWSER_ARGS.split(",") if arg.strip()]
-        # Use "new" headless mode for better container compatibility
-        headless_mode = "new" if HEADLESS else False
-        self.browser = await browser_launcher.launch(headless=headless_mode, args=launch_args)
+        # Add new headless mode flag for better container compatibility
+        if HEADLESS and "--headless=new" not in launch_args:
+            launch_args.append("--headless=new")
+        self.browser = await browser_launcher.launch(headless=HEADLESS, args=launch_args)
         self.context = await self.browser.new_context(
             viewport={"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
