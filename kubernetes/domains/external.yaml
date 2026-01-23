@@ -46,7 +46,7 @@ spec:
           args:
             - |
               echo "Installing Playwright browsers..."
-              playwright install chromium
+              playwright install --with-deps chromium || playwright install chromium
               echo "Playwright installation complete"
           env:
             - name: PLAYWRIGHT_BROWSERS_PATH
@@ -57,6 +57,7 @@ spec:
       containers:
         - name: mcp-server
           image: ghcr.io/charlieshreck/mcp-external:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
               name: http
@@ -75,6 +76,8 @@ spec:
           volumeMounts:
             - name: playwright-browsers
               mountPath: /browsers
+            - name: dshm
+              mountPath: /dev/shm
           resources:
             requests:
               memory: "512Mi"
@@ -97,6 +100,10 @@ spec:
       volumes:
         - name: playwright-browsers
           emptyDir: {}
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
 ---
 apiVersion: v1
 kind: Service

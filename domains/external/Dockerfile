@@ -42,9 +42,10 @@ COPY domains/external/src ./src
 RUN pip install --no-cache-dir /app/shared
 RUN pip install --no-cache-dir .
 
-# Install Playwright browsers to shared location
+# Install Playwright browsers and all system dependencies
 ENV PLAYWRIGHT_BROWSERS_PATH=/app/browsers
-RUN mkdir -p /app/browsers && playwright install chromium
+RUN mkdir -p /app/browsers && \
+    playwright install --with-deps chromium
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
