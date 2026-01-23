@@ -141,6 +141,100 @@ def register_tools(mcp: FastMCP):
         result = await opnsense_api("/firewall/alias/searchItem", method="POST", data={"current": 1, "rowCount": 200})
         return result.get("rows", [])
 
+    # =========================================================================
+    # Firewall Rule Management (Automation API)
+    # =========================================================================
+
+    @mcp.tool()
+    async def add_firewall_rule(
+        interface: str,
+        direction: str = "in",
+        action: str = "pass",
+        protocol: str = "any",
+        source_net: str = "any",
+        destination_net: str = "any",
+        destination_port: str = "",
+        description: str = "",
+        enabled: bool = True
+    ) -> str:
+        """Add a firewall rule via the automation API.
+
+        Args:
+            interface: Interface name (e.g., 'opt2' for Production, 'opt1' for Agentic, 'opt3' for Monit)
+            direction: Traffic direction - 'in' or 'out'
+            action: Rule action - 'pass', 'block', or 'reject'
+            protocol: Protocol - 'any', 'TCP', 'UDP', 'TCP/UDP', 'ICMP', etc.
+            source_net: Source network/IP (e.g., '10.10.0.0/24', 'any', or alias name)
+            destination_net: Destination network/IP (e.g., '10.20.0.0/24', 'any', or alias name)
+            destination_port: Destination port(s) (e.g., '80', '443', '80,443', '8000-9000')
+            description: Rule description
+            enabled: Whether the rule is enabled
+
+        Note: Rules are added to the automation filter, which works alongside legacy GUI rules.
+        Use apply_firewall_rules() after adding rules to activate them."""
+        data = {
+            "rule": {
+                "enabled": "1" if enabled else "0",
+                "sequence": "1",
+                "action": action,
+                "quick": "1",
+                "interface": interface,
+                "direction": direction,
+                "ipprotocol": "inet",
+                "protocol": protocol,
+                "source_net": source_net,
+                "source_not": "0",
+                "destination_net": destination_net,
+                "destination_not": "0",
+                "description": description
+            }
+        }
+        if destination_port:
+            data["rule"]["destination_port"] = destination_port
+
+        result = await opnsense_api("/firewall/filter/addRule", method="POST", data=data)
+        uuid = result.get("uuid", "unknown")
+        return f"Added firewall rule (UUID: {uuid}). Run apply_firewall_rules() to activate."
+
+    @mcp.tool()
+    async def delete_firewall_rule(uuid: str) -> str:
+        """Delete a firewall rule by UUID.
+
+        Args:
+            uuid: UUID of the rule to delete (from get_firewall_rules output)"""
+        await opnsense_api(f"/firewall/filter/delRule/{uuid}", method="POST")
+        return f"Deleted rule {uuid}. Run apply_firewall_rules() to activate changes."
+
+    @mcp.tool()
+    async def toggle_firewall_rule(uuid: str, enabled: bool) -> str:
+        """Enable or disable a firewall rule.
+
+        Args:
+            uuid: UUID of the rule
+            enabled: True to enable, False to disable"""
+        endpoint = "toggleRule" if enabled else "toggleRule"
+        data = {"rule": {"enabled": "1" if enabled else "0"}}
+        await opnsense_api(f"/firewall/filter/setRule/{uuid}", method="POST", data=data)
+        return f"Rule {uuid} {'enabled' if enabled else 'disabled'}. Run apply_firewall_rules() to activate."
+
+    @mcp.tool()
+    async def apply_firewall_rules() -> str:
+        """Apply pending firewall rule changes.
+
+        Call this after adding, modifying, or deleting firewall rules."""
+        result = await opnsense_api("/firewall/filter/apply", method="POST")
+        status = result.get("status", "unknown")
+        return f"Firewall rules applied: {status}"
+
+    @mcp.tool()
+    async def get_nat_rules() -> List[dict]:
+        """List NAT port forwarding rules."""
+        try:
+            result = await opnsense_api("/firewall/source_nat/searchRule", method="POST", data={"current": 1, "rowCount": 200})
+            return result.get("rows", [])
+        except Exception:
+            return [{"note": "NAT rules API not available or empty"}]
+
     @mcp.tool()
     async def get_dhcp_leases() -> List[dict]:
         """List active DHCP leases."""
