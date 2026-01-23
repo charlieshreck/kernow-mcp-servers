@@ -10,8 +10,10 @@ from fastmcp import FastMCP
 logger = logging.getLogger(__name__)
 
 # Configuration
-# NOTE: OPNsense requires SNI (Server Name Indication) - must use hostname, not IP
-OPNSENSE_URL = os.environ.get("OPNSENSE_URL", "https://opnsense.kernow.io")
+# NOTE: OPNsense requires SNI (Server Name Indication). When connecting from
+# environments that can't resolve the internal DNS, use IP with SNI hostname.
+OPNSENSE_HOST = os.environ.get("OPNSENSE_HOST", "10.10.0.1")
+OPNSENSE_SNI_HOSTNAME = os.environ.get("OPNSENSE_SNI_HOSTNAME", "opnsense.kernow.io")
 OPNSENSE_API_KEY = os.environ.get("OPNSENSE_API_KEY", "")
 OPNSENSE_API_SECRET = os.environ.get("OPNSENSE_API_SECRET", "")
 
@@ -24,15 +26,29 @@ async def opnsense_api(endpoint: str, method: str = "GET", data: dict = None) ->
     """Make authenticated API call to OPNsense.
 
     Note: OPNsense search endpoints require POST with pagination params.
+    Uses IP address with SNI hostname header to work around split-DNS issues.
     """
-    auth = (OPNSENSE_API_KEY, OPNSENSE_API_SECRET)
-    url = f"{OPNSENSE_URL}/api{endpoint}"
+    import ssl
 
-    async with httpx.AsyncClient(verify=False, timeout=30.0) as client:
+    auth = (OPNSENSE_API_KEY, OPNSENSE_API_SECRET)
+    # Connect to IP but use hostname for SNI and Host header
+    url = f"https://{OPNSENSE_HOST}/api{endpoint}"
+
+    # Create SSL context with SNI hostname
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
+
+    async with httpx.AsyncClient(
+        verify=ssl_context,
+        timeout=30.0,
+        headers={"Host": OPNSENSE_SNI_HOSTNAME}
+    ) as client:
+        # httpx will use the Host header for SNI when connecting
         if method == "GET":
-            resp = await client.get(url, auth=auth)
+            resp = await client.get(url, auth=auth, extensions={"sni_hostname": OPNSENSE_SNI_HOSTNAME})
         elif method == "POST":
-            resp = await client.post(url, auth=auth, json=data or {})
+            resp = await client.post(url, auth=auth, json=data or {}, extensions={"sni_hostname": OPNSENSE_SNI_HOSTNAME})
         else:
             raise ValueError(f"Unsupported method: {method}")
 

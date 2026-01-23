@@ -20,8 +20,9 @@ data:
   # Cloudflare
   CLOUDFLARE_API_BASE: "https://api.cloudflare.com/client/v4"
 
-  # OPNsense (must use hostname for SNI)
-  OPNSENSE_URL: "https://opnsense.kernow.io"
+  # OPNsense (IP with SNI hostname for split-DNS environments)
+  OPNSENSE_HOST: "10.10.0.1"
+  OPNSENSE_SNI_HOSTNAME: "opnsense.kernow.io"
 
   # AdGuard Home
   ADGUARD_URL: "http://10.10.0.1:3000"
