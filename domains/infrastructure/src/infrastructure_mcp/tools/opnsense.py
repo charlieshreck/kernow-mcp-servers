@@ -10,7 +10,8 @@ from fastmcp import FastMCP
 logger = logging.getLogger(__name__)
 
 # Configuration
-OPNSENSE_URL = os.environ.get("OPNSENSE_URL", "https://10.10.0.1")
+# NOTE: OPNsense requires SNI (Server Name Indication) - must use hostname, not IP
+OPNSENSE_URL = os.environ.get("OPNSENSE_URL", "https://opnsense.kernow.io")
 OPNSENSE_API_KEY = os.environ.get("OPNSENSE_API_KEY", "")
 OPNSENSE_API_SECRET = os.environ.get("OPNSENSE_API_SECRET", "")
 
@@ -20,7 +21,10 @@ ADGUARD_PASSWORD = os.environ.get("ADGUARD_PASSWORD", "")
 
 
 async def opnsense_api(endpoint: str, method: str = "GET", data: dict = None) -> dict:
-    """Make authenticated API call to OPNsense."""
+    """Make authenticated API call to OPNsense.
+
+    Note: OPNsense search endpoints require POST with pagination params.
+    """
     auth = (OPNSENSE_API_KEY, OPNSENSE_API_SECRET)
     url = f"{OPNSENSE_URL}/api{endpoint}"
 
@@ -28,7 +32,7 @@ async def opnsense_api(endpoint: str, method: str = "GET", data: dict = None) ->
         if method == "GET":
             resp = await client.get(url, auth=auth)
         elif method == "POST":
-            resp = await client.post(url, auth=auth, json=data)
+            resp = await client.post(url, auth=auth, json=data or {})
         else:
             raise ValueError(f"Unsupported method: {method}")
 
@@ -84,18 +88,26 @@ def register_tools(mcp: FastMCP):
     async def get_interfaces() -> List[dict]:
         """List all network interfaces with traffic statistics."""
         result = await opnsense_api("/interfaces/overview/export")
-        return result.get("rows", [])
+        # This endpoint returns a list directly, not wrapped in 'rows'
+        return result if isinstance(result, list) else result.get("rows", [])
 
     @mcp.tool()
     async def get_firewall_rules() -> List[dict]:
         """List firewall filter rules."""
-        result = await opnsense_api("/firewall/filter/searchRule")
+        # OPNsense search endpoints require POST with pagination
+        result = await opnsense_api("/firewall/filter/searchRule", method="POST", data={"current": 1, "rowCount": 500})
+        return result.get("rows", [])
+
+    @mcp.tool()
+    async def get_firewall_aliases() -> List[dict]:
+        """List firewall aliases (IP lists, port groups, etc.)."""
+        result = await opnsense_api("/firewall/alias/searchItem", method="POST", data={"current": 1, "rowCount": 200})
         return result.get("rows", [])
 
     @mcp.tool()
     async def get_dhcp_leases() -> List[dict]:
         """List active DHCP leases."""
-        result = await opnsense_api("/kea/leases4/search")
+        result = await opnsense_api("/kea/leases4/search", method="POST", data={"current": 1, "rowCount": 500})
         return result.get("rows", [])
 
     @mcp.tool()
@@ -112,8 +124,107 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     async def get_services() -> List[dict]:
         """List all services and their running status."""
-        result = await opnsense_api("/core/service/search")
+        result = await opnsense_api("/core/service/search", method="POST", data={"current": 1, "rowCount": 100})
         return result.get("rows", [])
+
+    # =========================================================================
+    # Service Control
+    # =========================================================================
+
+    @mcp.tool()
+    async def start_service(service_id: str) -> str:
+        """Start a service by ID.
+
+        Args:
+            service_id: Service ID (e.g., 'unbound', 'caddy', 'AdGuardHome')"""
+        result = await opnsense_api(f"/core/service/start/{service_id}", method="POST")
+        return f"Started {service_id}: {result.get('result', 'unknown')}"
+
+    @mcp.tool()
+    async def stop_service(service_id: str) -> str:
+        """Stop a service by ID.
+
+        Args:
+            service_id: Service ID (e.g., 'unbound', 'caddy', 'AdGuardHome')"""
+        result = await opnsense_api(f"/core/service/stop/{service_id}", method="POST")
+        return f"Stopped {service_id}: {result.get('result', 'unknown')}"
+
+    @mcp.tool()
+    async def restart_service(service_id: str) -> str:
+        """Restart a service by ID.
+
+        Args:
+            service_id: Service ID (e.g., 'unbound', 'caddy', 'AdGuardHome')"""
+        result = await opnsense_api(f"/core/service/restart/{service_id}", method="POST")
+        return f"Restarted {service_id}: {result.get('result', 'unknown')}"
+
+    # =========================================================================
+    # Firewall Alias Management
+    # =========================================================================
+
+    @mcp.tool()
+    async def add_firewall_alias(
+        name: str,
+        alias_type: str,
+        content: str,
+        description: str = ""
+    ) -> str:
+        """Add a new firewall alias.
+
+        Args:
+            name: Alias name (letters, numbers, underscores only)
+            alias_type: Type - 'host' (IPs), 'network' (CIDRs), 'port' (ports/ranges)
+            content: Comma-separated values (e.g., '10.0.0.1,10.0.0.2' or '80,443,8080-8090')
+            description: Optional description"""
+        data = {
+            "alias": {
+                "enabled": "1",
+                "name": name,
+                "type": alias_type,
+                "content": content,
+                "description": description
+            }
+        }
+        result = await opnsense_api("/firewall/alias/addItem", method="POST", data=data)
+        # Apply changes
+        await opnsense_api("/firewall/alias/reconfigure", method="POST")
+        return f"Added alias '{name}' (UUID: {result.get('uuid', 'unknown')})"
+
+    @mcp.tool()
+    async def update_firewall_alias(
+        uuid: str,
+        content: str = None,
+        description: str = None,
+        enabled: bool = None
+    ) -> str:
+        """Update an existing firewall alias.
+
+        Args:
+            uuid: UUID of the alias to update
+            content: New comma-separated values (optional)
+            description: New description (optional)
+            enabled: Enable/disable the alias (optional)"""
+        data = {"alias": {}}
+        if content is not None:
+            data["alias"]["content"] = content
+        if description is not None:
+            data["alias"]["description"] = description
+        if enabled is not None:
+            data["alias"]["enabled"] = "1" if enabled else "0"
+
+        await opnsense_api(f"/firewall/alias/setItem/{uuid}", method="POST", data=data)
+        await opnsense_api("/firewall/alias/reconfigure", method="POST")
+        return f"Updated alias {uuid}"
+
+    @mcp.tool()
+    async def delete_firewall_alias(uuid: str) -> str:
+        """Delete a firewall alias by UUID.
+
+        Args:
+            uuid: UUID of the alias to delete"""
+        await opnsense_api(f"/firewall/alias/delItem/{uuid}", method="POST")
+        await opnsense_api("/firewall/alias/reconfigure", method="POST")
+        return f"Deleted alias {uuid}"
 
     # =========================================================================
     # AdGuard Home
@@ -186,6 +297,26 @@ def register_tools(mcp: FastMCP):
         """Get DNS rewrites/custom rules in AdGuard Home."""
         return await adguard_api("/control/rewrite/list")
 
+    @mcp.tool()
+    async def add_adguard_rewrite(domain: str, answer: str) -> str:
+        """Add a DNS rewrite rule in AdGuard Home.
+
+        Args:
+            domain: Domain to rewrite (e.g., 'example.com' or '*.example.com')
+            answer: Target IP address or hostname to resolve to"""
+        await adguard_api("/control/rewrite/add", method="POST", data={"domain": domain, "answer": answer})
+        return f"Added rewrite: {domain} → {answer}"
+
+    @mcp.tool()
+    async def delete_adguard_rewrite(domain: str, answer: str) -> str:
+        """Delete a DNS rewrite rule from AdGuard Home.
+
+        Args:
+            domain: Domain of the rewrite to delete
+            answer: Target answer of the rewrite to delete"""
+        await adguard_api("/control/rewrite/delete", method="POST", data={"domain": domain, "answer": answer})
+        return f"Deleted rewrite: {domain} → {answer}"
+
     # =========================================================================
     # Unbound DNS
     # =========================================================================
@@ -198,7 +329,7 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     async def get_unbound_overrides() -> List[dict]:
         """Get Unbound DNS host overrides (local DNS entries)."""
-        result = await opnsense_api("/unbound/settings/searchHostOverride")
+        result = await opnsense_api("/unbound/settings/searchHostOverride", method="POST", data={"current": 1, "rowCount": 200})
         return result.get("rows", [])
 
     @mcp.tool()
@@ -260,6 +391,16 @@ def register_tools(mcp: FastMCP):
         await opnsense_api("/unbound/service/reconfigure", method="POST")
         return f"Updated override {uuid}"
 
+    @mcp.tool()
+    async def delete_unbound_override(uuid: str) -> str:
+        """Delete a DNS host override from Unbound.
+
+        Args:
+            uuid: UUID of the override to delete"""
+        await opnsense_api(f"/unbound/settings/delHostOverride/{uuid}", method="POST")
+        await opnsense_api("/unbound/service/reconfigure", method="POST")
+        return f"Deleted override {uuid}"
+
     # =========================================================================
     # Caddy Reverse Proxy
     # =========================================================================
@@ -267,13 +408,13 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     async def list_caddy_reverse_proxies() -> List[dict]:
         """List all Caddy reverse proxy domain entries."""
-        result = await opnsense_api("/caddy/ReverseProxy/searchReverseProxy")
+        result = await opnsense_api("/caddy/ReverseProxy/searchReverseProxy", method="POST", data={"current": 1, "rowCount": 200})
         return result.get("rows", [])
 
     @mcp.tool()
     async def list_caddy_handles() -> List[dict]:
         """List all Caddy backend handlers."""
-        result = await opnsense_api("/caddy/ReverseProxy/searchHandle")
+        result = await opnsense_api("/caddy/ReverseProxy/searchHandle", method="POST", data={"current": 1, "rowCount": 200})
         return result.get("rows", [])
 
     @mcp.tool()
@@ -336,9 +477,21 @@ def register_tools(mcp: FastMCP):
 
     @mcp.tool()
     async def delete_caddy_reverse_proxy(uuid: str) -> str:
-        """Delete a Caddy reverse proxy entry by UUID."""
+        """Delete a Caddy reverse proxy entry by UUID.
+
+        Args:
+            uuid: UUID of the reverse proxy entry to delete"""
         await opnsense_api(f"/caddy/ReverseProxy/delReverseProxy/{uuid}", method="POST")
         return f"Deleted reverse proxy {uuid}"
+
+    @mcp.tool()
+    async def delete_caddy_handle(uuid: str) -> str:
+        """Delete a Caddy backend handler by UUID.
+
+        Args:
+            uuid: UUID of the handle to delete"""
+        await opnsense_api(f"/caddy/ReverseProxy/delHandle/{uuid}", method="POST")
+        return f"Deleted handle {uuid}"
 
     @mcp.tool()
     async def reconfigure_caddy() -> str:
