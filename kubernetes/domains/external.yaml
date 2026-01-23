@@ -39,6 +39,21 @@ spec:
         app: external-mcp
         component: mcp
     spec:
+      initContainers:
+        - name: install-playwright
+          image: ghcr.io/charlieshreck/mcp-external:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "Installing Playwright browsers..."
+              playwright install chromium
+              echo "Playwright installation complete"
+          env:
+            - name: PLAYWRIGHT_BROWSERS_PATH
+              value: /browsers
+          volumeMounts:
+            - name: playwright-browsers
+              mountPath: /browsers
       containers:
         - name: mcp-server
           image: ghcr.io/charlieshreck/mcp-external:latest
@@ -55,6 +70,11 @@ spec:
                   name: mcp-github
                   key: GITHUB_TOKEN
                   optional: false
+            - name: PLAYWRIGHT_BROWSERS_PATH
+              value: /browsers
+          volumeMounts:
+            - name: playwright-browsers
+              mountPath: /browsers
           resources:
             requests:
               memory: "512Mi"
@@ -74,6 +94,9 @@ spec:
               port: 8000
             initialDelaySeconds: 20
             periodSeconds: 30
+      volumes:
+        - name: playwright-browsers
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
