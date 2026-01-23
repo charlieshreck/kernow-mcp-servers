@@ -18,6 +18,8 @@ HEADLESS = os.environ.get("HEADLESS", "true").lower() == "true"
 DEFAULT_TIMEOUT = int(os.environ.get("DEFAULT_TIMEOUT", "30000"))
 VIEWPORT_WIDTH = int(os.environ.get("VIEWPORT_WIDTH", "1920"))
 VIEWPORT_HEIGHT = int(os.environ.get("VIEWPORT_HEIGHT", "1080"))
+# Extra browser args (comma-separated), e.g., "--no-sandbox,--disable-dev-shm-usage"
+BROWSER_ARGS = os.environ.get("BROWSER_ARGS", "--no-sandbox,--disable-dev-shm-usage,--disable-gpu")
 
 
 class NavigateResult(BaseModel):
@@ -73,7 +75,9 @@ class BrowserManager:
             self.playwright = await async_playwright().start()
 
         browser_launcher = getattr(self.playwright, BROWSER_TYPE)
-        self.browser = await browser_launcher.launch(headless=HEADLESS)
+        # Parse browser args from environment
+        launch_args = [arg.strip() for arg in BROWSER_ARGS.split(",") if arg.strip()]
+        self.browser = await browser_launcher.launch(headless=HEADLESS, args=launch_args)
         self.context = await self.browser.new_context(
             viewport={"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
