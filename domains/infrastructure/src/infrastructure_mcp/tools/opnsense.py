@@ -539,3 +539,259 @@ def register_tools(mcp: FastMCP):
             },
             "unbound": unbound_stats
         }
+
+    # =========================================================================
+    # Firmware & Repository Management
+    # =========================================================================
+
+    @mcp.tool()
+    async def get_firmware_config() -> dict:
+        """Get firmware/repository configuration including mirrors and update settings."""
+        return await opnsense_api("/core/firmware/getfirmwareconfig")
+
+    @mcp.tool()
+    async def get_firmware_status() -> dict:
+        """Get current firmware version and update status."""
+        return await opnsense_api("/core/firmware/status")
+
+    @mcp.tool()
+    async def get_firmware_info() -> dict:
+        """Get detailed firmware info including installed packages and available updates."""
+        return await opnsense_api("/core/firmware/info")
+
+    @mcp.tool()
+    async def check_firmware_updates() -> dict:
+        """Check for available firmware and package updates."""
+        # Trigger update check
+        await opnsense_api("/core/firmware/check", method="POST")
+        # Return status
+        return await opnsense_api("/core/firmware/status")
+
+    @mcp.tool()
+    async def set_firmware_mirror(mirror: str) -> str:
+        """Set the firmware download mirror URL.
+
+        Args:
+            mirror: Mirror URL (e.g., 'https://mirror.ams1.nl.leaseweb.net/opnsense')"""
+        data = {"firmware": {"mirror": mirror}}
+        await opnsense_api("/core/firmware/setfirmwareconfig", method="POST", data=data)
+        return f"Firmware mirror set to: {mirror}"
+
+    @mcp.tool()
+    async def set_firmware_flavour(flavour: str) -> str:
+        """Set the firmware flavour/type.
+
+        Args:
+            flavour: Firmware type - 'OpenSSL' (default), 'LibreSSL', or empty for default"""
+        data = {"firmware": {"flavour": flavour}}
+        await opnsense_api("/core/firmware/setfirmwareconfig", method="POST", data=data)
+        return f"Firmware flavour set to: {flavour}"
+
+    @mcp.tool()
+    async def set_firmware_subscription(subscription: str = "") -> str:
+        """Set OPNsense business subscription key (optional).
+
+        Args:
+            subscription: Subscription key, or empty to disable"""
+        data = {"firmware": {"subscription": subscription}}
+        await opnsense_api("/core/firmware/setfirmwareconfig", method="POST", data=data)
+        return "Subscription key updated" if subscription else "Subscription disabled"
+
+    @mcp.tool()
+    async def run_firmware_update() -> str:
+        """Run firmware update. CAUTION: This will update the system and may require reboot."""
+        result = await opnsense_api("/core/firmware/update", method="POST")
+        return f"Firmware update initiated: {result}"
+
+    # =========================================================================
+    # Plugin Management
+    # =========================================================================
+
+    @mcp.tool()
+    async def list_plugins() -> dict:
+        """List all installed and available plugins."""
+        info = await opnsense_api("/core/firmware/info")
+        return {
+            "installed": info.get("package", []),
+            "available": info.get("plugin", [])
+        }
+
+    @mcp.tool()
+    async def search_plugins(query: str) -> List[dict]:
+        """Search for plugins by name or description.
+
+        Args:
+            query: Search term (e.g., 'tailscale', 'wireguard', 'haproxy')"""
+        info = await opnsense_api("/core/firmware/info")
+        all_plugins = info.get("plugin", [])
+        query_lower = query.lower()
+        return [
+            p for p in all_plugins
+            if query_lower in p.get("name", "").lower()
+            or query_lower in p.get("comment", "").lower()
+        ]
+
+    @mcp.tool()
+    async def install_plugin(package_name: str) -> str:
+        """Install an OPNsense plugin by package name.
+
+        Args:
+            package_name: Plugin package name (e.g., 'os-tailscale', 'os-wireguard')"""
+        result = await opnsense_api(f"/core/firmware/install/{package_name}", method="POST")
+        return f"Installing {package_name}: {result}"
+
+    @mcp.tool()
+    async def remove_plugin(package_name: str) -> str:
+        """Remove an installed OPNsense plugin.
+
+        Args:
+            package_name: Plugin package name (e.g., 'os-tailscale')"""
+        result = await opnsense_api(f"/core/firmware/remove/{package_name}", method="POST")
+        return f"Removing {package_name}: {result}"
+
+    @mcp.tool()
+    async def reinstall_plugin(package_name: str) -> str:
+        """Reinstall an OPNsense plugin.
+
+        Args:
+            package_name: Plugin package name (e.g., 'os-tailscale')"""
+        result = await opnsense_api(f"/core/firmware/reinstall/{package_name}", method="POST")
+        return f"Reinstalling {package_name}: {result}"
+
+    @mcp.tool()
+    async def lock_plugin(package_name: str) -> str:
+        """Lock a plugin to prevent automatic updates.
+
+        Args:
+            package_name: Plugin package name to lock"""
+        result = await opnsense_api(f"/core/firmware/lock/{package_name}", method="POST")
+        return f"Locked {package_name}: {result}"
+
+    @mcp.tool()
+    async def unlock_plugin(package_name: str) -> str:
+        """Unlock a plugin to allow automatic updates.
+
+        Args:
+            package_name: Plugin package name to unlock"""
+        result = await opnsense_api(f"/core/firmware/unlock/{package_name}", method="POST")
+        return f"Unlocked {package_name}: {result}"
+
+    @mcp.tool()
+    async def upgrade_all_plugins() -> str:
+        """Upgrade all installed plugins to latest versions."""
+        result = await opnsense_api("/core/firmware/upgrade", method="POST")
+        return f"Upgrade initiated: {result}"
+
+    @mcp.tool()
+    async def get_plugin_changelog(package_name: str) -> dict:
+        """Get changelog for a plugin.
+
+        Args:
+            package_name: Plugin package name"""
+        return await opnsense_api(f"/core/firmware/changelog/{package_name}")
+
+    # =========================================================================
+    # Tailscale Management (requires os-tailscale plugin)
+    # =========================================================================
+
+    @mcp.tool()
+    async def get_tailscale_status() -> dict:
+        """Get Tailscale service status and connection info.
+
+        Note: Requires os-tailscale plugin to be installed."""
+        try:
+            status = await opnsense_api("/tailscale/service/status")
+            return status
+        except Exception as e:
+            return {"error": str(e), "hint": "Ensure os-tailscale plugin is installed"}
+
+    @mcp.tool()
+    async def get_tailscale_config() -> dict:
+        """Get Tailscale configuration.
+
+        Note: Requires os-tailscale plugin to be installed."""
+        try:
+            config = await opnsense_api("/tailscale/general/get")
+            return config
+        except Exception as e:
+            return {"error": str(e), "hint": "Ensure os-tailscale plugin is installed"}
+
+    @mcp.tool()
+    async def set_tailscale_config(
+        enabled: bool = None,
+        authkey: str = None,
+        advertise_routes: str = None,
+        accept_routes: bool = None,
+        advertise_exit_node: bool = None
+    ) -> str:
+        """Configure Tailscale settings.
+
+        Args:
+            enabled: Enable/disable Tailscale
+            authkey: Tailscale auth key (from admin.tailscale.com)
+            advertise_routes: Comma-separated CIDRs to advertise (e.g., '10.10.0.0/24,10.20.0.0/24')
+            accept_routes: Accept routes from other Tailscale nodes
+            advertise_exit_node: Advertise this node as an exit node
+
+        Note: Requires os-tailscale plugin to be installed."""
+        try:
+            data = {"general": {}}
+            if enabled is not None:
+                data["general"]["enabled"] = "1" if enabled else "0"
+            if authkey is not None:
+                data["general"]["authkey"] = authkey
+            if advertise_routes is not None:
+                data["general"]["advertise_routes"] = advertise_routes
+            if accept_routes is not None:
+                data["general"]["accept_routes"] = "1" if accept_routes else "0"
+            if advertise_exit_node is not None:
+                data["general"]["advertise_exit_node"] = "1" if advertise_exit_node else "0"
+
+            await opnsense_api("/tailscale/general/set", method="POST", data=data)
+            return "Tailscale configuration updated"
+        except Exception as e:
+            return f"Error: {e}. Ensure os-tailscale plugin is installed."
+
+    @mcp.tool()
+    async def start_tailscale() -> str:
+        """Start the Tailscale service.
+
+        Note: Requires os-tailscale plugin to be installed."""
+        try:
+            result = await opnsense_api("/tailscale/service/start", method="POST")
+            return f"Tailscale started: {result.get('result', 'unknown')}"
+        except Exception as e:
+            return f"Error: {e}. Ensure os-tailscale plugin is installed."
+
+    @mcp.tool()
+    async def stop_tailscale() -> str:
+        """Stop the Tailscale service.
+
+        Note: Requires os-tailscale plugin to be installed."""
+        try:
+            result = await opnsense_api("/tailscale/service/stop", method="POST")
+            return f"Tailscale stopped: {result.get('result', 'unknown')}"
+        except Exception as e:
+            return f"Error: {e}. Ensure os-tailscale plugin is installed."
+
+    @mcp.tool()
+    async def restart_tailscale() -> str:
+        """Restart the Tailscale service.
+
+        Note: Requires os-tailscale plugin to be installed."""
+        try:
+            result = await opnsense_api("/tailscale/service/restart", method="POST")
+            return f"Tailscale restarted: {result.get('result', 'unknown')}"
+        except Exception as e:
+            return f"Error: {e}. Ensure os-tailscale plugin is installed."
+
+    @mcp.tool()
+    async def reconfigure_tailscale() -> str:
+        """Apply pending Tailscale configuration changes.
+
+        Note: Requires os-tailscale plugin to be installed."""
+        try:
+            result = await opnsense_api("/tailscale/service/reconfigure", method="POST")
+            return f"Tailscale reconfigured: {result.get('result', 'unknown')}"
+        except Exception as e:
+            return f"Error: {e}. Ensure os-tailscale plugin is installed."
