@@ -154,3 +154,32 @@ def register_tools(mcp: FastMCP):
             return {"success": True, "deleted": key, "path": path}
         except Exception as e:
             return {"error": str(e)}
+
+    @mcp.tool()
+    async def delete_folder(path: str, name: str) -> Dict[str, Any]:
+        """Delete an empty folder."""
+        try:
+            # First get the folder ID
+            result = await infisical_api(
+                f"/v1/folders?workspaceId={INFISICAL_WORKSPACE_ID}&environment={INFISICAL_ENVIRONMENT}&path={path}"
+            )
+            folders = result.get("folders", [])
+            folder = next((f for f in folders if f["name"] == name), None)
+            if not folder:
+                return {"error": f"Folder '{name}' not found at {path}"}
+
+            # Delete the folder by ID
+            token = await get_access_token()
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.delete(
+                    f"{INFISICAL_URL}/api/v1/folders/{folder['id']}",
+                    headers={"Authorization": f"Bearer {token}"},
+                    json={
+                        "workspaceId": INFISICAL_WORKSPACE_ID,
+                        "environment": INFISICAL_ENVIRONMENT
+                    }
+                )
+                response.raise_for_status()
+            return {"success": True, "deleted": name, "path": path}
+        except Exception as e:
+            return {"error": str(e)}
