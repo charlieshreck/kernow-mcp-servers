@@ -25,7 +25,6 @@ data:
 
   # AdGuard Home
   ADGUARD_URL: "http://10.10.0.1:3000"
-  ADGUARD_USERNAME: "admin"
 
   # Infisical
   INFISICAL_URL: "https://app.infisical.com"
@@ -60,21 +59,61 @@ spec:
           envFrom:
             - configMapRef:
                 name: infrastructure-mcp-config
-            # Use individual MCP secrets per service (domain-aligned paths)
+            # Cloudflare - unique keys, use secretRef
             - secretRef:
                 name: mcp-cloudflare
-            - secretRef:
-                name: mcp-truenas-hdd
-            - secretRef:
-                name: mcp-truenas-media
-            - secretRef:
-                name: mcp-proxmox
-            - secretRef:
-                name: mcp-opnsense
-            - secretRef:
-                name: mcp-adguard
+            # Infisical - unique keys, use secretRef
             - secretRef:
                 name: mcp-infisical
+          env:
+            # TrueNAS HDD - prefix keys to avoid conflicts
+            - name: TRUENAS_HDD_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-truenas-hdd
+                  key: API_KEY
+                  optional: true
+            # TrueNAS Media - prefix keys to avoid conflicts
+            - name: TRUENAS_MEDIA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-truenas-media
+                  key: API_KEY
+                  optional: true
+            # Proxmox - prefix keys
+            - name: PROXMOX_TOKEN_ID
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-proxmox
+                  key: TOKEN_ID
+            - name: PROXMOX_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-proxmox
+                  key: TOKEN_SECRET
+                  optional: true
+            # OPNsense - prefix keys
+            - name: OPNSENSE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-opnsense
+                  key: API_KEY
+            - name: OPNSENSE_API_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-opnsense
+                  key: API_SECRET
+            # AdGuard - prefix keys
+            - name: ADGUARD_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-adguard
+                  key: USERNAME
+            - name: ADGUARD_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-adguard
+                  key: PASSWORD
           volumeMounts:
             - name: kubeconfig-agentic
               mountPath: /kubeconfigs/agentic
