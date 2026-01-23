@@ -10,10 +10,11 @@ from fastmcp import FastMCP
 logger = logging.getLogger(__name__)
 
 # Configuration
+# Support both INFISICAL_* prefixed vars and unprefixed vars (for K8s secretRef compatibility)
 INFISICAL_URL = os.environ.get("INFISICAL_URL", "https://app.infisical.com")
-INFISICAL_CLIENT_ID = os.environ.get("INFISICAL_CLIENT_ID", "")
-INFISICAL_CLIENT_SECRET = os.environ.get("INFISICAL_CLIENT_SECRET", "")
-INFISICAL_WORKSPACE_ID = os.environ.get("INFISICAL_WORKSPACE_ID", "")
+INFISICAL_CLIENT_ID = os.environ.get("INFISICAL_CLIENT_ID") or os.environ.get("CLIENT_ID", "")
+INFISICAL_CLIENT_SECRET = os.environ.get("INFISICAL_CLIENT_SECRET") or os.environ.get("CLIENT_SECRET", "")
+INFISICAL_WORKSPACE_ID = os.environ.get("INFISICAL_WORKSPACE_ID") or os.environ.get("WORKSPACE_ID", "")
 INFISICAL_ENVIRONMENT = os.environ.get("INFISICAL_ENVIRONMENT", "prod")
 
 # Token cache
@@ -139,5 +140,17 @@ def register_tools(mcp: FastMCP):
                 }
             )
             return {"success": True, "folder": result.get("folder", {})}
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    async def delete_secret(path: str, key: str) -> Dict[str, Any]:
+        """Delete a secret."""
+        try:
+            await infisical_api(
+                f"/v3/secrets/raw/{key}?workspaceId={INFISICAL_WORKSPACE_ID}&environment={INFISICAL_ENVIRONMENT}&secretPath={path}",
+                method="DELETE"
+            )
+            return {"success": True, "deleted": key, "path": path}
         except Exception as e:
             return {"error": str(e)}
