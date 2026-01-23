@@ -110,9 +110,30 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     async def get_firewall_rules() -> List[dict]:
         """List firewall filter rules."""
-        # OPNsense search endpoints require POST with pagination
-        result = await opnsense_api("/firewall/filter/searchRule", method="POST", data={"current": 1, "rowCount": 500})
-        return result.get("rows", [])
+        # OPNsense has rules in multiple places - try automation filter first, then legacy
+        rules = []
+
+        # Try automation filter rules (os-firewall plugin)
+        try:
+            result = await opnsense_api("/firewall/filter/searchRule", method="POST", data={"current": 1, "rowCount": 500})
+            if result.get("rows"):
+                rules.extend([{**r, "source": "automation"} for r in result.get("rows", [])])
+        except Exception:
+            pass
+
+        # Get floating rules if available
+        try:
+            result = await opnsense_api("/firewall/filter/searchFloatingRule", method="POST", data={"current": 1, "rowCount": 500})
+            if result.get("rows"):
+                rules.extend([{**r, "source": "floating"} for r in result.get("rows", [])])
+        except Exception:
+            pass
+
+        # If no rules found, note that config may be in legacy XML config
+        if not rules:
+            return [{"note": "No automation rules found. Firewall rules may be in legacy config (System > Firewall > Rules)."}]
+
+        return rules
 
     @mcp.tool()
     async def get_firewall_aliases() -> List[dict]:
@@ -123,8 +144,20 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     async def get_dhcp_leases() -> List[dict]:
         """List active DHCP leases."""
-        result = await opnsense_api("/kea/leases4/search", method="POST", data={"current": 1, "rowCount": 500})
-        return result.get("rows", [])
+        # Try ISC DHCPd first (most common), then KEA
+        try:
+            result = await opnsense_api("/dhcpv4/leases/searchLease", method="POST", data={"current": 1, "rowCount": 500})
+            if result.get("rows"):
+                return result.get("rows", [])
+        except Exception:
+            pass
+
+        # Fallback to KEA DHCP
+        try:
+            result = await opnsense_api("/kea/leases4/search", method="POST", data={"current": 1, "rowCount": 500})
+            return result.get("rows", [])
+        except Exception:
+            return []
 
     @mcp.tool()
     async def get_gateway_status() -> List[dict]:
@@ -610,11 +643,36 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     async def list_plugins() -> dict:
         """List all installed and available plugins."""
-        info = await opnsense_api("/core/firmware/info")
-        return {
-            "installed": info.get("package", []),
-            "available": info.get("plugin", [])
-        }
+        try:
+            info = await opnsense_api("/core/firmware/info")
+            # Extract plugin info - structure varies by OPNsense version
+            installed = []
+            available = []
+
+            # Packages list contains installed items
+            for pkg in info.get("package", []):
+                if isinstance(pkg, dict):
+                    installed.append({
+                        "name": pkg.get("name", ""),
+                        "version": pkg.get("version", ""),
+                        "comment": pkg.get("comment", ""),
+                        "locked": pkg.get("locked", "0") == "1"
+                    })
+
+            # Plugin list contains available plugins
+            for plugin in info.get("plugin", []):
+                if isinstance(plugin, dict):
+                    available.append({
+                        "name": plugin.get("name", ""),
+                        "version": plugin.get("version", ""),
+                        "comment": plugin.get("comment", ""),
+                        "installed": plugin.get("installed", "0") == "1"
+                    })
+
+            return {"installed": installed, "available": available}
+        except Exception as e:
+            logger.error(f"Failed to list plugins: {e}")
+            return {"error": str(e), "installed": [], "available": []}
 
     @mcp.tool()
     async def search_plugins(query: str) -> List[dict]:
@@ -622,14 +680,26 @@ def register_tools(mcp: FastMCP):
 
         Args:
             query: Search term (e.g., 'tailscale', 'wireguard', 'haproxy')"""
-        info = await opnsense_api("/core/firmware/info")
-        all_plugins = info.get("plugin", [])
-        query_lower = query.lower()
-        return [
-            p for p in all_plugins
-            if query_lower in p.get("name", "").lower()
-            or query_lower in p.get("comment", "").lower()
-        ]
+        try:
+            info = await opnsense_api("/core/firmware/info")
+            all_plugins = info.get("plugin", [])
+            query_lower = query.lower()
+            results = []
+            for p in all_plugins:
+                if isinstance(p, dict):
+                    name = p.get("name", "")
+                    comment = p.get("comment", "")
+                    if query_lower in name.lower() or query_lower in comment.lower():
+                        results.append({
+                            "name": name,
+                            "version": p.get("version", ""),
+                            "comment": comment,
+                            "installed": p.get("installed", "0") == "1"
+                        })
+            return results
+        except Exception as e:
+            logger.error(f"Failed to search plugins: {e}")
+            return [{"error": str(e)}]
 
     @mcp.tool()
     async def install_plugin(package_name: str) -> str:
