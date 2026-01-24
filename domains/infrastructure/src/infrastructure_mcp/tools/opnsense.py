@@ -674,7 +674,27 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     async def get_firmware_config() -> dict:
         """Get firmware/repository configuration including mirrors and update settings."""
-        return await opnsense_api("/core/firmware/getfirmwareconfig")
+        # Try multiple endpoints as API varies by version
+        try:
+            return await opnsense_api("/core/firmware/getfirmwareconfig")
+        except Exception:
+            pass
+        try:
+            return await opnsense_api("/core/firmware/getOptions")
+        except Exception:
+            pass
+        # Fallback to status which has some config info
+        return await opnsense_api("/core/firmware/status")
+
+    @mcp.tool()
+    async def get_firmware_options() -> dict:
+        """Get available firmware mirrors, flavours, and repository options."""
+        return await opnsense_api("/core/firmware/getOptions")
+
+    @mcp.tool()
+    async def get_pkg_audit() -> dict:
+        """Get package security audit information."""
+        return await opnsense_api("/core/firmware/audit")
 
     @mcp.tool()
     async def get_firmware_status() -> dict:
@@ -735,15 +755,47 @@ def register_tools(mcp: FastMCP):
     # =========================================================================
 
     @mcp.tool()
+    async def list_installed_plugins() -> List[dict]:
+        """List installed plugins only (fast, no remote fetch).
+
+        This uses the local package database without contacting remote repos.
+        Use list_available_plugins() for full repo data (slower)."""
+        try:
+            # Use status endpoint which has local package info without remote fetch
+            result = await opnsense_api("/core/firmware/status")
+            installed = []
+
+            # Check for local packages in status
+            for pkg_name, pkg_info in result.get("all_packages", {}).items():
+                if isinstance(pkg_info, dict):
+                    installed.append({
+                        "name": pkg_info.get("name", pkg_name),
+                        "version": pkg_info.get("old", pkg_info.get("new", "")),
+                        "repository": pkg_info.get("repository", ""),
+                    })
+
+            # If all_packages is empty, try to get from product info
+            if not installed:
+                product = result.get("product", {})
+                # Return minimal info from what's available locally
+                return [{"note": "Use list_available_plugins() for full plugin list (requires remote fetch)"}]
+
+            return installed
+        except Exception as e:
+            logger.error(f"Failed to list installed plugins: {e}")
+            return [{"error": str(e)}]
+
+    @mcp.tool()
     async def list_plugins() -> dict:
-        """List all installed and available plugins."""
+        """List all installed and available plugins (slow - fetches from remote repos).
+
+        NOTE: This contacts remote package repositories and may take 10-30 seconds.
+        For quick checks, use list_installed_plugins() instead."""
         try:
             info = await opnsense_api("/core/firmware/info")
-            # Extract plugin info - structure varies by OPNsense version
             installed = []
             available = []
 
-            # Packages list contains installed items
             for pkg in info.get("package", []):
                 if isinstance(pkg, dict):
                     installed.append({
@@ -753,7 +805,6 @@ def register_tools(mcp: FastMCP):
                         "locked": pkg.get("locked", "0") == "1"
                     })
 
-            # Plugin list contains available plugins
             for plugin in info.get("plugin", []):
                 if isinstance(plugin, dict):
                     available.append({
