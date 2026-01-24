@@ -959,3 +959,408 @@ def register_tools(mcp: FastMCP):
             return f"Tailscale reconfigured: {result.get('result', 'unknown')}"
         except Exception as e:
             return f"Error: {e}. Ensure os-tailscale plugin is installed."
+
+    # =========================================================================
+    # Gateway Monitoring (dpinger)
+    # =========================================================================
+
+    @mcp.tool()
+    async def search_gateways() -> List[dict]:
+        """List all gateways with their UUIDs and monitoring configuration.
+
+        Returns gateway details including monitoring status, thresholds, and UUIDs
+        needed for set_gateway operations."""
+        result = await opnsense_api("/routing/settings/searchGateway", method="POST", data={"current": 1, "rowCount": 50})
+        return result.get("rows", [])
+
+    @mcp.tool()
+    async def get_gateway(uuid: str) -> dict:
+        """Get detailed gateway configuration by UUID.
+
+        Args:
+            uuid: Gateway UUID from search_gateways"""
+        result = await opnsense_api(f"/routing/settings/getGateway/{uuid}")
+        return result.get("gateway", {})
+
+    @mcp.tool()
+    async def set_gateway(
+        uuid: str,
+        monitor: str = None,
+        monitor_disable: bool = None,
+        latency_low: int = None,
+        latency_high: int = None,
+        loss_low: int = None,
+        loss_high: int = None,
+        interval: int = None,
+        loss_interval: int = None,
+        time_period: int = None
+    ) -> str:
+        """Configure gateway monitoring settings (dpinger).
+
+        Args:
+            uuid: Gateway UUID from search_gateways
+            monitor: Monitor IP address (e.g., '1.1.1.1' for Cloudflare DNS)
+            monitor_disable: Set True to disable monitoring, False to enable
+            latency_low: Low latency threshold in ms (warning, default 200)
+            latency_high: High latency threshold in ms (alarm, default 500)
+            loss_low: Low packet loss % (warning, default 10)
+            loss_high: High packet loss % (alarm, default 20)
+            interval: Probe interval in seconds (default 1)
+            loss_interval: Loss calculation interval (default 4)
+            time_period: Time period for stats in seconds (default 60)
+
+        Example:
+            set_gateway(uuid="abc123", monitor="1.1.1.1", monitor_disable=False,
+                       latency_low=200, latency_high=400, loss_low=10, loss_high=20)
+        """
+        data = {"gateway": {}}
+
+        if monitor is not None:
+            data["gateway"]["monitor"] = monitor
+        if monitor_disable is not None:
+            data["gateway"]["monitor_disable"] = "1" if monitor_disable else "0"
+        if latency_low is not None:
+            data["gateway"]["latencylow"] = str(latency_low)
+        if latency_high is not None:
+            data["gateway"]["latencyhigh"] = str(latency_high)
+        if loss_low is not None:
+            data["gateway"]["losslow"] = str(loss_low)
+        if loss_high is not None:
+            data["gateway"]["losshigh"] = str(loss_high)
+        if interval is not None:
+            data["gateway"]["interval"] = str(interval)
+        if loss_interval is not None:
+            data["gateway"]["loss_interval"] = str(loss_interval)
+        if time_period is not None:
+            data["gateway"]["time_period"] = str(time_period)
+
+        await opnsense_api(f"/routing/settings/setGateway/{uuid}", method="POST", data=data)
+        return f"Gateway {uuid} configuration updated. Run reconfigure_gateways() to apply."
+
+    @mcp.tool()
+    async def reconfigure_gateways() -> str:
+        """Apply pending gateway configuration changes."""
+        result = await opnsense_api("/routing/settings/reconfigure", method="POST")
+        return f"Gateways reconfigured: {result.get('status', 'unknown')}"
+
+    # =========================================================================
+    # Unbound DNS-over-TLS (DoT) Forwarding
+    # =========================================================================
+
+    @mcp.tool()
+    async def search_unbound_forwards() -> List[dict]:
+        """List all Unbound DNS forward destinations (including DoT servers).
+
+        Returns forward entries with UUIDs needed for enabling DoT."""
+        result = await opnsense_api("/unbound/settings/searchForward", method="POST", data={"current": 1, "rowCount": 50})
+        return result.get("rows", [])
+
+    @mcp.tool()
+    async def get_unbound_forward(uuid: str) -> dict:
+        """Get detailed forward destination configuration.
+
+        Args:
+            uuid: Forward entry UUID from search_unbound_forwards"""
+        result = await opnsense_api(f"/unbound/settings/getForward/{uuid}")
+        return result.get("forward", {})
+
+    @mcp.tool()
+    async def set_unbound_forward(
+        uuid: str,
+        enabled: bool = None,
+        server: str = None,
+        port: int = None,
+        forward_type: str = None,
+        verify: str = None
+    ) -> str:
+        """Configure an Unbound forward destination (enable/configure DoT).
+
+        Args:
+            uuid: Forward entry UUID from search_unbound_forwards
+            enabled: Enable or disable this forward destination
+            server: DNS server IP address (e.g., '1.1.1.1')
+            port: Port number (53 for plain DNS, 853 for DoT)
+            forward_type: Type - 'forward' (plain) or 'dot' (DNS-over-TLS)
+            verify: TLS verification hostname for DoT (e.g., 'cloudflare-dns.com')
+
+        Example - Enable Cloudflare DoT:
+            set_unbound_forward(uuid="abc123", enabled=True, forward_type="dot",
+                               server="1.1.1.1", port=853, verify="cloudflare-dns.com")
+        """
+        data = {"forward": {}}
+
+        if enabled is not None:
+            data["forward"]["enabled"] = "1" if enabled else "0"
+        if server is not None:
+            data["forward"]["server"] = server
+        if port is not None:
+            data["forward"]["port"] = str(port)
+        if forward_type is not None:
+            data["forward"]["type"] = forward_type
+        if verify is not None:
+            data["forward"]["verify"] = verify
+
+        await opnsense_api(f"/unbound/settings/setForward/{uuid}", method="POST", data=data)
+        return f"Forward {uuid} updated. Run reconfigure_unbound() to apply."
+
+    @mcp.tool()
+    async def add_unbound_forward(
+        server: str,
+        port: int = 853,
+        forward_type: str = "dot",
+        verify: str = "",
+        enabled: bool = True
+    ) -> str:
+        """Add a new Unbound forward destination (e.g., DoT server).
+
+        Args:
+            server: DNS server IP address (e.g., '1.1.1.1', '9.9.9.9')
+            port: Port number (853 for DoT, 53 for plain DNS)
+            forward_type: Type - 'dot' (DNS-over-TLS) or 'forward' (plain)
+            verify: TLS verification hostname for DoT (e.g., 'cloudflare-dns.com')
+            enabled: Enable immediately (default True)
+
+        Example - Add Cloudflare DoT:
+            add_unbound_forward(server="1.1.1.1", port=853, forward_type="dot",
+                               verify="cloudflare-dns.com")
+        """
+        data = {
+            "forward": {
+                "enabled": "1" if enabled else "0",
+                "server": server,
+                "port": str(port),
+                "type": forward_type,
+                "verify": verify
+            }
+        }
+
+        result = await opnsense_api("/unbound/settings/addForward", method="POST", data=data)
+        uuid = result.get("uuid", "unknown")
+        return f"Added forward to {server}:{port} (UUID: {uuid}). Run reconfigure_unbound() to apply."
+
+    @mcp.tool()
+    async def delete_unbound_forward(uuid: str) -> str:
+        """Delete an Unbound forward destination.
+
+        Args:
+            uuid: Forward entry UUID from search_unbound_forwards"""
+        await opnsense_api(f"/unbound/settings/delForward/{uuid}", method="POST")
+        return f"Deleted forward {uuid}. Run reconfigure_unbound() to apply."
+
+    @mcp.tool()
+    async def set_unbound_general(
+        forwarding_enabled: bool = None,
+        dnssec: bool = None,
+        dns64: bool = None
+    ) -> str:
+        """Configure Unbound general settings.
+
+        Args:
+            forwarding_enabled: Enable DNS forwarding mode (required for DoT)
+            dnssec: Enable DNSSEC validation
+            dns64: Enable DNS64 for IPv6 translation
+
+        Note: Forwarding must be enabled for DoT forwards to work."""
+        # Get current config first
+        current = await opnsense_api("/unbound/settings/get")
+        unbound = current.get("unbound", {})
+
+        data = {"unbound": {}}
+        if forwarding_enabled is not None:
+            data["unbound"]["forwarding"] = {"enabled": "1" if forwarding_enabled else "0"}
+        if dnssec is not None:
+            data["unbound"]["dnssec"] = "1" if dnssec else "0"
+        if dns64 is not None:
+            data["unbound"]["dns64"] = "1" if dns64 else "0"
+
+        await opnsense_api("/unbound/settings/set", method="POST", data=data)
+        return "Unbound settings updated. Run reconfigure_unbound() to apply."
+
+    @mcp.tool()
+    async def reconfigure_unbound() -> str:
+        """Apply pending Unbound DNS configuration changes."""
+        result = await opnsense_api("/unbound/service/reconfigure", method="POST")
+        return f"Unbound reconfigured: {result.get('status', 'unknown')}"
+
+    # =========================================================================
+    # Telegraf Metrics Export (requires os-telegraf plugin)
+    # =========================================================================
+
+    @mcp.tool()
+    async def get_telegraf_config() -> dict:
+        """Get Telegraf configuration including general, input, and output settings.
+
+        Note: Requires os-telegraf plugin to be installed."""
+        try:
+            general = await opnsense_api("/telegraf/general/get")
+            return general
+        except Exception as e:
+            return {"error": str(e), "hint": "Ensure os-telegraf plugin is installed"}
+
+    @mcp.tool()
+    async def set_telegraf_general(
+        enabled: bool = None,
+        interval: int = None,
+        flush_interval: int = None
+    ) -> str:
+        """Configure Telegraf general settings.
+
+        Args:
+            enabled: Enable or disable Telegraf
+            interval: Data collection interval in seconds (default 30)
+            flush_interval: Metric flush interval in seconds (default 10)
+
+        Note: Requires os-telegraf plugin to be installed."""
+        try:
+            data = {"general": {}}
+            if enabled is not None:
+                data["general"]["enabled"] = "1" if enabled else "0"
+            if interval is not None:
+                data["general"]["interval"] = str(interval)
+            if flush_interval is not None:
+                data["general"]["flush_interval"] = str(flush_interval)
+
+            await opnsense_api("/telegraf/general/set", method="POST", data=data)
+            return "Telegraf general settings updated. Run reconfigure_telegraf() to apply."
+        except Exception as e:
+            return f"Error: {e}. Ensure os-telegraf plugin is installed."
+
+    @mcp.tool()
+    async def set_telegraf_output(
+        influx_enable: bool = None,
+        influx_url: str = None,
+        influx_database: str = None,
+        influx_username: str = None,
+        influx_password: str = None,
+        influx_insecure_skip_verify: bool = None
+    ) -> str:
+        """Configure Telegraf InfluxDB/VictoriaMetrics output.
+
+        Args:
+            influx_enable: Enable InfluxDB output
+            influx_url: InfluxDB/VictoriaMetrics URL (e.g., 'http://10.30.0.120:8428')
+            influx_database: Database name (default 'opnsense')
+            influx_username: Optional username for auth
+            influx_password: Optional password for auth
+            influx_insecure_skip_verify: Skip TLS verification
+
+        Note: VictoriaMetrics supports InfluxDB line protocol on /write endpoint."""
+        try:
+            data = {"output": {}}
+            if influx_enable is not None:
+                data["output"]["influx_enable"] = "1" if influx_enable else "0"
+            if influx_url is not None:
+                data["output"]["influx_url"] = influx_url
+            if influx_database is not None:
+                data["output"]["influx_database"] = influx_database
+            if influx_username is not None:
+                data["output"]["influx_username"] = influx_username
+            if influx_password is not None:
+                data["output"]["influx_password"] = influx_password
+            if influx_insecure_skip_verify is not None:
+                data["output"]["influx_insecure_skip_verify"] = "1" if influx_insecure_skip_verify else "0"
+
+            await opnsense_api("/telegraf/output/set", method="POST", data=data)
+            return "Telegraf output settings updated. Run reconfigure_telegraf() to apply."
+        except Exception as e:
+            return f"Error: {e}. Ensure os-telegraf plugin is installed."
+
+    @mcp.tool()
+    async def set_telegraf_input(
+        cpu: bool = None,
+        disk: bool = None,
+        diskio: bool = None,
+        mem: bool = None,
+        net: bool = None,
+        pf: bool = None,
+        system: bool = None,
+        processes: bool = None,
+        haproxy: bool = None,
+        zfs: bool = None
+    ) -> str:
+        """Configure Telegraf input plugins.
+
+        Args:
+            cpu: Enable CPU metrics
+            disk: Enable disk usage metrics
+            diskio: Enable disk I/O metrics
+            mem: Enable memory metrics
+            net: Enable network interface metrics
+            pf: Enable PF firewall metrics
+            system: Enable system metrics (load, uptime)
+            processes: Enable process metrics
+            haproxy: Enable HAProxy metrics (requires os-haproxy)
+            zfs: Enable ZFS metrics
+
+        Recommended minimum: cpu, mem, disk, net, pf, system"""
+        try:
+            data = {"input": {}}
+            if cpu is not None:
+                data["input"]["cpu"] = "1" if cpu else "0"
+            if disk is not None:
+                data["input"]["disk"] = "1" if disk else "0"
+            if diskio is not None:
+                data["input"]["diskio"] = "1" if diskio else "0"
+            if mem is not None:
+                data["input"]["mem"] = "1" if mem else "0"
+            if net is not None:
+                data["input"]["net"] = "1" if net else "0"
+            if pf is not None:
+                data["input"]["pf"] = "1" if pf else "0"
+            if system is not None:
+                data["input"]["system"] = "1" if system else "0"
+            if processes is not None:
+                data["input"]["processes"] = "1" if processes else "0"
+            if haproxy is not None:
+                data["input"]["haproxy"] = "1" if haproxy else "0"
+            if zfs is not None:
+                data["input"]["zfs"] = "1" if zfs else "0"
+
+            await opnsense_api("/telegraf/input/set", method="POST", data=data)
+            return "Telegraf input settings updated. Run reconfigure_telegraf() to apply."
+        except Exception as e:
+            return f"Error: {e}. Ensure os-telegraf plugin is installed."
+
+    @mcp.tool()
+    async def reconfigure_telegraf() -> str:
+        """Apply pending Telegraf configuration changes.
+
+        Note: Requires os-telegraf plugin to be installed."""
+        try:
+            result = await opnsense_api("/telegraf/service/reconfigure", method="POST")
+            return f"Telegraf reconfigured: {result.get('status', 'unknown')}"
+        except Exception as e:
+            return f"Error: {e}. Ensure os-telegraf plugin is installed."
+
+    @mcp.tool()
+    async def start_telegraf() -> str:
+        """Start the Telegraf service.
+
+        Note: Requires os-telegraf plugin to be installed."""
+        try:
+            result = await opnsense_api("/telegraf/service/start", method="POST")
+            return f"Telegraf started: {result.get('result', 'unknown')}"
+        except Exception as e:
+            return f"Error: {e}. Ensure os-telegraf plugin is installed."
+
+    @mcp.tool()
+    async def stop_telegraf() -> str:
+        """Stop the Telegraf service.
+
+        Note: Requires os-telegraf plugin to be installed."""
+        try:
+            result = await opnsense_api("/telegraf/service/stop", method="POST")
+            return f"Telegraf stopped: {result.get('result', 'unknown')}"
+        except Exception as e:
+            return f"Error: {e}. Ensure os-telegraf plugin is installed."
+
+    @mcp.tool()
+    async def restart_telegraf() -> str:
+        """Restart the Telegraf service.
+
+        Note: Requires os-telegraf plugin to be installed."""
+        try:
+            result = await opnsense_api("/telegraf/service/restart", method="POST")
+            return f"Telegraf restarted: {result.get('result', 'unknown')}"
+        except Exception as e:
+            return f"Error: {e}. Ensure os-telegraf plugin is installed."
