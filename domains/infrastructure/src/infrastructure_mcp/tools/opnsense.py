@@ -966,6 +966,7 @@ def register_tools(mcp: FastMCP):
     async def set_tailscale_config(
         enabled: bool = None,
         authkey: str = None,
+        login_server: str = None,
         advertise_routes: str = None,
         accept_routes: bool = None,
         advertise_exit_node: bool = None
@@ -975,6 +976,7 @@ def register_tools(mcp: FastMCP):
         Args:
             enabled: Enable/disable Tailscale
             authkey: Tailscale auth key (from admin.tailscale.com)
+            login_server: Coordination server URL (empty string for Tailscale.com, or Headscale URL)
             advertise_routes: Comma-separated CIDRs to advertise (e.g., '10.10.0.0/24,10.20.0.0/24')
             accept_routes: Accept routes from other Tailscale nodes
             advertise_exit_node: Advertise this node as an exit node
@@ -995,11 +997,18 @@ def register_tools(mcp: FastMCP):
                 await opnsense_api("/tailscale/settings/set", method="POST", data=settings_data)
                 results.append("settings updated")
 
-            # Update authentication (authkey)
-            if authkey is not None:
-                auth_data = {"authentication": {"authkey": authkey}}
+            # Update authentication (authkey and/or login_server)
+            if authkey is not None or login_server is not None:
+                auth_data = {"authentication": {}}
+                if authkey is not None:
+                    auth_data["authentication"]["authkey"] = authkey
+                if login_server is not None:
+                    auth_data["authentication"]["loginServer"] = login_server
                 await opnsense_api("/tailscale/authentication/set", method="POST", data=auth_data)
-                results.append("auth key set")
+                if authkey is not None:
+                    results.append("auth key set")
+                if login_server is not None:
+                    results.append(f"login server set to {'Tailscale.com' if login_server == '' else login_server}")
 
             # Add subnets (advertise_routes) - each subnet added separately
             if advertise_routes is not None:
