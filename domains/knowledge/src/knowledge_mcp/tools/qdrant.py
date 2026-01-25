@@ -74,6 +74,43 @@ async def get_status() -> dict:
         return {"status": "unhealthy", "error": str(e)}
 
 
+# Neo4j helpers for dual-indexing (Project 02)
+NEO4J_URL = os.environ.get("NEO4J_URL", "http://neo4j.ai-platform.svc:7474")
+NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
+NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "")
+
+
+async def _neo4j_query(cypher: str, params: dict = None) -> Dict[str, Any]:
+    """Execute a Cypher query against Neo4j."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            f"{NEO4J_URL}/db/neo4j/tx/commit",
+            auth=(NEO4J_USER, NEO4J_PASSWORD),
+            json={
+                "statements": [{
+                    "statement": cypher,
+                    "parameters": params or {}
+                }]
+            }
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+def _parse_neo4j_results(data: dict) -> List[dict]:
+    """Parse Neo4j response into simple dict format."""
+    results = []
+    for result in data.get("results", []):
+        columns = result.get("columns", [])
+        for row in result.get("data", []):
+            record = {}
+            for i, col in enumerate(columns):
+                val = row.get("row", [])[i] if i < len(row.get("row", [])) else None
+                record[col] = val
+            results.append(record)
+    return results
+
+
 def register_tools(mcp: FastMCP):
     """Register Qdrant tools with the MCP server."""
 
@@ -601,6 +638,442 @@ def register_tools(mcp: FastMCP):
             return sorted(events, key=lambda x: x.get("timestamp", ""), reverse=True)[:limit]
         except Exception as e:
             return [{"error": str(e)}]
+
+    # =========================================================================
+    # Project 02: Dual-Indexing & Retrieval - New Tools
+    # =========================================================================
+
+    @mcp.tool()
+    async def search_knowledge_nodes(
+        query: str,
+        node_type: Optional[str] = None,
+        domain: Optional[str] = None,
+        limit: int = 10,
+        min_score: float = 0.6
+    ) -> List[dict]:
+        """Search dual-indexed knowledge nodes (Problems, Runbooks).
+
+        Returns neo4j_id for graph traversal.
+
+        Args:
+            query: Search query
+            node_type: Filter by 'problem' or 'runbook'
+            domain: Filter by domain (infra, security, dns, etc.)
+            limit: Max results
+            min_score: Minimum similarity score
+        """
+        try:
+            embedding = await get_embedding(query)
+
+            filter_conditions = []
+            if node_type:
+                filter_conditions.append({"key": "type", "match": {"value": node_type}})
+            if domain:
+                filter_conditions.append({"key": "domain", "match": {"value": domain}})
+
+            body = {
+                "vector": embedding,
+                "limit": limit,
+                "with_payload": True,
+                "score_threshold": min_score
+            }
+            if filter_conditions:
+                body["filter"] = {"must": filter_conditions}
+
+            result = await qdrant_request("/collections/knowledge_nodes/points/search", "POST", body)
+
+            return [{
+                "id": r.get("id"),
+                "score": r.get("score"),
+                "neo4j_id": r.get("payload", {}).get("neo4j_id"),
+                "type": r.get("payload", {}).get("type"),
+                "domain": r.get("payload", {}).get("domain"),
+                "content_hash": r.get("payload", {}).get("content_hash")
+            } for r in result.get("result", [])]
+        except Exception as e:
+            logger.error(f"search_knowledge_nodes failed: {e}")
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    async def search_documents(
+        query: str,
+        doc_type: Optional[str] = None,
+        domain: Optional[str] = None,
+        limit: int = 10,
+        min_score: float = 0.5
+    ) -> List[dict]:
+        """Search documents collection (solutions, artifacts, documentation).
+
+        Args:
+            query: Search query
+            doc_type: Filter by type (solution, artifact, runbook_step, documentation)
+            domain: Filter by domain
+            limit: Max results
+            min_score: Minimum similarity score
+        """
+        try:
+            embedding = await get_embedding(query)
+
+            filter_conditions = []
+            if doc_type:
+                filter_conditions.append({"key": "type", "match": {"value": doc_type}})
+            if domain:
+                filter_conditions.append({"key": "domain", "match": {"value": domain}})
+
+            body = {
+                "vector": embedding,
+                "limit": limit,
+                "with_payload": True,
+                "score_threshold": min_score
+            }
+            if filter_conditions:
+                body["filter"] = {"must": filter_conditions}
+
+            result = await qdrant_request("/collections/documents/points/search", "POST", body)
+
+            return [{
+                "id": r.get("id"),
+                "score": r.get("score"),
+                "type": r.get("payload", {}).get("type"),
+                "title": r.get("payload", {}).get("title"),
+                "content": r.get("payload", {}).get("content", "")[:500],
+                "domain": r.get("payload", {}).get("domain"),
+                "neo4j_id": r.get("payload", {}).get("neo4j_id"),
+                "tags": r.get("payload", {}).get("tags", [])
+            } for r in result.get("result", [])]
+        except Exception as e:
+            logger.error(f"search_documents failed: {e}")
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    async def add_document(
+        title: str,
+        content: str,
+        doc_type: str = "documentation",
+        domain: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        neo4j_id: Optional[str] = None,
+        parent_id: Optional[str] = None,
+        source: str = "manual"
+    ) -> dict:
+        """Add a document to the documents collection.
+
+        Args:
+            title: Document title
+            content: Full text content
+            doc_type: Type (solution, artifact, runbook_step, documentation)
+            domain: Domain classification
+            tags: Freeform tags
+            neo4j_id: Link to Neo4j node if applicable
+            parent_id: Parent document/runbook ID
+            source: Source (runbook, solution, manual, learned)
+        """
+        try:
+            import hashlib
+
+            # Create embedding from title + content
+            embed_text = f"{title}\n"
+            if domain:
+                embed_text += f"Domain: {domain}\n"
+            if tags:
+                embed_text += f"Tags: {', '.join(tags)}\n"
+            embed_text += content[:10000]  # Truncate for embedding
+
+            embedding = await get_embedding(embed_text)
+            doc_id = str(uuid4())
+            content_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
+
+            await qdrant_request("/collections/documents/points", "PUT", {
+                "points": [{
+                    "id": doc_id,
+                    "vector": embedding,
+                    "payload": {
+                        "title": title,
+                        "content": content[:50000],  # Store truncated
+                        "content_hash": content_hash,
+                        "type": doc_type,
+                        "domain": domain,
+                        "tags": tags or [],
+                        "neo4j_id": neo4j_id,
+                        "parent_id": parent_id,
+                        "source": source,
+                        "created_at": datetime.utcnow().isoformat(),
+                        "indexed_at": datetime.utcnow().isoformat()
+                    }
+                }]
+            })
+
+            return {"success": True, "id": doc_id, "content_hash": content_hash}
+        except Exception as e:
+            logger.error(f"add_document failed: {e}")
+            return {"error": str(e)}
+
+    # =========================================================================
+    # Project 02: Dual-Indexing CRUD Functions
+    # Atomic writes to Neo4j + Qdrant with rollback handling
+    # =========================================================================
+
+    @mcp.tool()
+    async def create_problem_with_dual_index(
+        description: str,
+        domain: str,
+        runbook_id: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        source: str = "agent"
+    ) -> dict:
+        """Create a Problem in Neo4j and dual-index in Qdrant.
+
+        Atomic operation: creates in Neo4j first, then indexes in Qdrant.
+        If Qdrant fails, rolls back the Neo4j creation.
+
+        Args:
+            description: Problem description (used for embedding)
+            domain: Problem domain (infra, security, obs, dns, network, data)
+            runbook_id: Optional runbook ID to link via SOLVES relationship
+            tags: Optional tags for categorization
+            source: Source of the problem (agent, manual, migration)
+
+        Returns:
+            Dict with problem_id, neo4j_id, qdrant_indexed status
+        """
+        from uuid import uuid4
+        import hashlib
+
+        problem_id = str(uuid4())
+        content_hash = hashlib.sha256(description.encode()).hexdigest()[:16]
+
+        try:
+            # Step 1: Create Problem node in Neo4j
+            neo4j_result = await _neo4j_query("""
+                CREATE (p:Problem {
+                    id: $problem_id,
+                    description: $description,
+                    domain: $domain,
+                    tags: $tags,
+                    source: $source,
+                    content_hash: $content_hash,
+                    created_at: datetime(),
+                    last_referenced: datetime(),
+                    weight: 1.0
+                })
+                RETURN p.id as id
+            """, {
+                "problem_id": problem_id,
+                "description": description,
+                "domain": domain,
+                "tags": tags or [],
+                "source": source,
+                "content_hash": content_hash
+            })
+
+            if neo4j_result.get("errors"):
+                return {"error": f"Neo4j creation failed: {neo4j_result['errors']}"}
+
+            # Step 2: Generate embedding and index in Qdrant
+            try:
+                embedding = await get_embedding(description)
+
+                await qdrant_request("/collections/knowledge_nodes/points", "PUT", {
+                    "points": [{
+                        "id": problem_id,
+                        "vector": embedding,
+                        "payload": {
+                            "type": "problem",
+                            "neo4j_id": problem_id,
+                            "domain": domain,
+                            "description": description[:1000],
+                            "tags": tags or [],
+                            "source": source,
+                            "content_hash": content_hash,
+                            "indexed_at": datetime.utcnow().isoformat()
+                        }
+                    }]
+                })
+
+            except Exception as qdrant_error:
+                # Rollback: Delete from Neo4j
+                logger.error(f"Qdrant indexing failed, rolling back Neo4j: {qdrant_error}")
+                await _neo4j_query("MATCH (p:Problem {id: $id}) DELETE p", {"id": problem_id})
+                return {"error": f"Dual-index failed (rolled back): {qdrant_error}"}
+
+            # Step 3: Create SOLVES relationship if runbook_id provided
+            if runbook_id:
+                await _neo4j_query("""
+                    MATCH (r:Runbook {id: $runbook_id})
+                    MATCH (p:Problem {id: $problem_id})
+                    MERGE (r)-[:SOLVES]->(p)
+                """, {"runbook_id": runbook_id, "problem_id": problem_id})
+
+            logger.info(f"Created Problem with dual-index: {problem_id}")
+            return {
+                "success": True,
+                "problem_id": problem_id,
+                "neo4j_id": problem_id,
+                "qdrant_indexed": True,
+                "content_hash": content_hash
+            }
+
+        except Exception as e:
+            logger.error(f"create_problem_with_dual_index failed: {e}")
+            return {"error": str(e)}
+
+    @mcp.tool()
+    async def update_problem_with_reindex(
+        problem_id: str,
+        description: Optional[str] = None,
+        domain: Optional[str] = None,
+        tags: Optional[List[str]] = None
+    ) -> dict:
+        """Update a Problem in Neo4j and re-index in Qdrant if content changed.
+
+        Only re-embeds if description changes (detected via content_hash).
+
+        Args:
+            problem_id: The Problem's ID
+            description: New description (triggers re-embedding)
+            domain: New domain
+            tags: New tags
+
+        Returns:
+            Dict with update status and whether re-indexing occurred
+        """
+        import hashlib
+
+        try:
+            # Get current state
+            current = await _neo4j_query("""
+                MATCH (p:Problem {id: $id})
+                RETURN p.description as description, p.content_hash as content_hash
+            """, {"id": problem_id})
+
+            records = _parse_neo4j_results(current)
+            if not records:
+                return {"error": "Problem not found"}
+
+            old_hash = records[0].get("content_hash", "")
+            needs_reindex = False
+
+            # Build update SET clause dynamically
+            updates = []
+            params = {"id": problem_id}
+
+            if description is not None:
+                new_hash = hashlib.sha256(description.encode()).hexdigest()[:16]
+                if new_hash != old_hash:
+                    needs_reindex = True
+                    updates.append("p.description = $description")
+                    updates.append("p.content_hash = $content_hash")
+                    params["description"] = description
+                    params["content_hash"] = new_hash
+
+            if domain is not None:
+                updates.append("p.domain = $domain")
+                params["domain"] = domain
+
+            if tags is not None:
+                updates.append("p.tags = $tags")
+                params["tags"] = tags
+
+            if not updates:
+                return {"success": True, "message": "No changes to apply"}
+
+            updates.append("p.last_referenced = datetime()")
+
+            # Update Neo4j
+            await _neo4j_query(f"""
+                MATCH (p:Problem {{id: $id}})
+                SET {', '.join(updates)}
+            """, params)
+
+            # Re-index in Qdrant if content changed
+            if needs_reindex:
+                embedding = await get_embedding(description)
+
+                # Get existing payload to merge
+                existing = await qdrant_request(
+                    f"/collections/knowledge_nodes/points/{problem_id}"
+                )
+                old_payload = existing.get("result", {}).get("payload", {})
+
+                await qdrant_request("/collections/knowledge_nodes/points", "PUT", {
+                    "points": [{
+                        "id": problem_id,
+                        "vector": embedding,
+                        "payload": {
+                            **old_payload,
+                            "description": description[:1000],
+                            "domain": domain or old_payload.get("domain"),
+                            "tags": tags or old_payload.get("tags", []),
+                            "content_hash": params.get("content_hash"),
+                            "indexed_at": datetime.utcnow().isoformat()
+                        }
+                    }]
+                })
+
+            logger.info(f"Updated Problem {problem_id}, reindexed: {needs_reindex}")
+            return {
+                "success": True,
+                "problem_id": problem_id,
+                "reindexed": needs_reindex
+            }
+
+        except Exception as e:
+            logger.error(f"update_problem_with_reindex failed: {e}")
+            return {"error": str(e)}
+
+    @mcp.tool()
+    async def delete_problem_with_dual_index(problem_id: str) -> dict:
+        """Delete a Problem from both Neo4j and Qdrant.
+
+        Deletes from Qdrant first (less critical), then Neo4j.
+        Also removes any SOLVES relationships.
+
+        Args:
+            problem_id: The Problem's ID
+
+        Returns:
+            Dict with deletion status for both stores
+        """
+        qdrant_deleted = False
+        neo4j_deleted = False
+
+        try:
+            # Step 1: Delete from Qdrant (less critical, do first)
+            try:
+                await qdrant_request(
+                    f"/collections/knowledge_nodes/points/delete",
+                    "POST",
+                    {"points": [problem_id]}
+                )
+                qdrant_deleted = True
+            except Exception as e:
+                logger.warning(f"Qdrant deletion failed (continuing): {e}")
+
+            # Step 2: Delete from Neo4j (including relationships)
+            result = await _neo4j_query("""
+                MATCH (p:Problem {id: $id})
+                OPTIONAL MATCH (p)-[r]-()
+                DELETE r, p
+                RETURN count(p) as deleted
+            """, {"id": problem_id})
+
+            records = _parse_neo4j_results(result)
+            neo4j_deleted = records and records[0].get("deleted", 0) > 0
+
+            if not neo4j_deleted and not qdrant_deleted:
+                return {"error": "Problem not found in either store"}
+
+            logger.info(f"Deleted Problem {problem_id}: neo4j={neo4j_deleted}, qdrant={qdrant_deleted}")
+            return {
+                "success": True,
+                "problem_id": problem_id,
+                "neo4j_deleted": neo4j_deleted,
+                "qdrant_deleted": qdrant_deleted
+            }
+
+        except Exception as e:
+            logger.error(f"delete_problem_with_dual_index failed: {e}")
+            return {"error": str(e)}
 
     @mcp.tool()
     async def search_all(query: str, limit: int = 3) -> dict:
