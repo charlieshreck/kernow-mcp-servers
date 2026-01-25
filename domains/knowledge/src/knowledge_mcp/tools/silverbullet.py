@@ -72,7 +72,9 @@ async def silverbullet_api(
 ) -> dict:
     """Make API call to Silver Bullet."""
     url = f"{SILVERBULLET_URL}/.fs{endpoint}"
-    headers = {}
+    headers = {
+        "X-Sync-Mode": "true"  # Required for API access vs browser navigation
+    }
     if get_meta:
         headers["X-Get-Meta"] = "true"
 
@@ -148,7 +150,9 @@ async def _create_outline_collection(name: str, description: str = "") -> Dict:
 async def _get_silverbullet_sync_pages() -> List[str]:
     """Get all Silver Bullet pages in the sync folder."""
     url = f"{SILVERBULLET_URL}/.fs"
-    headers = {}
+    headers = {
+        "X-Sync-Mode": "true"  # Required for API access
+    }
     auth_cookie = await _get_auth_cookie()
     if auth_cookie:
         headers["Cookie"] = auth_cookie
@@ -195,7 +199,9 @@ def register_tools(mcp: FastMCP):
             JSON list of files with name, size, and modification time.
         """
         url = f"{SILVERBULLET_URL}/.fs"
-        headers = {}
+        headers = {
+            "X-Sync-Mode": "true"  # Required for API access
+        }
         auth_cookie = await _get_auth_cookie()
         if auth_cookie:
             headers["Cookie"] = auth_cookie
@@ -284,7 +290,9 @@ def register_tools(mcp: FastMCP):
         """
         # Get all files first
         url = f"{SILVERBULLET_URL}/.fs"
-        headers = {}
+        headers = {
+            "X-Sync-Mode": "true"  # Required for API access
+        }
         auth_cookie = await _get_auth_cookie()
         if auth_cookie:
             headers["Cookie"] = auth_cookie
