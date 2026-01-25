@@ -576,10 +576,12 @@ def register_tools(mcp: FastMCP):
         Returns:
             UUID of created entry (use with add_caddy_handle)"""
         data = {
-            "reverseproxy": {
+            "reverse": {
                 "enabled": "1",
                 "FromDomain": domain,
                 "FromPort": "",
+                "accesslist": "",
+                "basicauth": "",
                 "description": description,
                 "DnsChallenge": "1" if dns_challenge else "0",
                 "DnsChallengeOverrideDomain": "",
