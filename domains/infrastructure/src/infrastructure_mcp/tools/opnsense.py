@@ -952,12 +952,13 @@ def register_tools(mcp: FastMCP):
 
     @mcp.tool()
     async def get_tailscale_config() -> dict:
-        """Get Tailscale configuration.
+        """Get Tailscale configuration (settings and authentication).
 
         Note: Requires os-tailscale plugin to be installed."""
         try:
-            config = await opnsense_api("/tailscale/general/get")
-            return config
+            settings = await opnsense_api("/tailscale/settings/get")
+            auth = await opnsense_api("/tailscale/authentication/get")
+            return {"settings": settings, "authentication": auth}
         except Exception as e:
             return {"error": str(e), "hint": "Ensure os-tailscale plugin is installed"}
 
@@ -980,20 +981,35 @@ def register_tools(mcp: FastMCP):
 
         Note: Requires os-tailscale plugin to be installed."""
         try:
-            data = {"general": {}}
-            if enabled is not None:
-                data["general"]["enabled"] = "1" if enabled else "0"
-            if authkey is not None:
-                data["general"]["authkey"] = authkey
-            if advertise_routes is not None:
-                data["general"]["advertise_routes"] = advertise_routes
-            if accept_routes is not None:
-                data["general"]["accept_routes"] = "1" if accept_routes else "0"
-            if advertise_exit_node is not None:
-                data["general"]["advertise_exit_node"] = "1" if advertise_exit_node else "0"
+            results = []
 
-            await opnsense_api("/tailscale/general/set", method="POST", data=data)
-            return "Tailscale configuration updated"
+            # Update settings (enabled, accept_routes, advertise_exit_node)
+            if enabled is not None or accept_routes is not None or advertise_exit_node is not None:
+                settings_data = {"settings": {}}
+                if enabled is not None:
+                    settings_data["settings"]["enabled"] = "1" if enabled else "0"
+                if accept_routes is not None:
+                    settings_data["settings"]["accept_routes"] = "1" if accept_routes else "0"
+                if advertise_exit_node is not None:
+                    settings_data["settings"]["advertise_exit_node"] = "1" if advertise_exit_node else "0"
+                await opnsense_api("/tailscale/settings/set", method="POST", data=settings_data)
+                results.append("settings updated")
+
+            # Update authentication (authkey)
+            if authkey is not None:
+                auth_data = {"authentication": {"authkey": authkey}}
+                await opnsense_api("/tailscale/authentication/set", method="POST", data=auth_data)
+                results.append("auth key set")
+
+            # Add subnets (advertise_routes) - each subnet added separately
+            if advertise_routes is not None:
+                subnets = [s.strip() for s in advertise_routes.split(",") if s.strip()]
+                for subnet in subnets:
+                    subnet_data = {"subnet": {"network": subnet, "enabled": "1"}}
+                    await opnsense_api("/tailscale/settings/add_subnet", method="POST", data=subnet_data)
+                results.append(f"{len(subnets)} subnets added")
+
+            return f"Tailscale configuration updated: {', '.join(results)}"
         except Exception as e:
             return f"Error: {e}. Ensure os-tailscale plugin is installed."
 
