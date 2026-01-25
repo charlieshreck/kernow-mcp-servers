@@ -579,14 +579,24 @@ def register_tools(mcp: FastMCP):
             "reverseproxy": {
                 "enabled": "1",
                 "FromDomain": domain,
-                "FromPort": "443",
+                "FromPort": "",
                 "description": description,
                 "DnsChallenge": "1" if dns_challenge else "0",
-                "AcmePassthrough": "0"
+                "DnsChallengeOverrideDomain": "",
+                "CustomCertificate": "",
+                "AccessLog": "0",
+                "DynDns": "0",
+                "AcmePassthrough": "",
+                "DisableTls": "0",
+                "ClientAuthMode": "",
+                "ClientAuthTrustPool": ""
             }
         }
         result = await opnsense_api("/caddy/ReverseProxy/addReverseProxy", method="POST", data=data)
         uuid = result.get("uuid", "")
+        if not uuid and result.get("result") == "failed":
+            validations = result.get("validations", {})
+            return f"Failed to create reverse proxy for {domain}: {validations or 'unknown error'}"
         return f"Created reverse proxy for {domain} (UUID: {uuid})"
 
     @mcp.tool()
@@ -594,7 +604,9 @@ def register_tools(mcp: FastMCP):
         reverse_uuid: str,
         backend_host: str,
         backend_port: int,
-        description: str = "Backend"
+        description: str = "Backend",
+        https_backend: bool = False,
+        skip_tls_verify: bool = False
     ) -> str:
         """Add a backend handler to a Caddy reverse proxy entry.
 
@@ -602,21 +614,37 @@ def register_tools(mcp: FastMCP):
             reverse_uuid: UUID from add_caddy_reverse_proxy
             backend_host: Backend IP or hostname (e.g., '10.20.0.40')
             backend_port: Backend port (e.g., 31095)
-            description: Optional description"""
+            description: Optional description
+            https_backend: Whether backend uses HTTPS (default False)
+            skip_tls_verify: Skip TLS verification for backend (default False)"""
         data = {
             "handle": {
                 "enabled": "1",
                 "reverse": reverse_uuid,
+                "subdomain": "",
                 "HandleType": "handle",
                 "HandlePath": "",
+                "HandleDirective": "reverse_proxy",
                 "ToDomain": backend_host,
                 "ToPort": str(backend_port),
-                "HttpTls": "0",
+                "ToPath": "",
+                "ForwardAuth": "0",
+                "HttpTls": "1" if https_backend else "0",
+                "HttpVersion": "",
+                "HttpKeepalive": "",
+                "HttpNtlm": "0",
+                "HttpTlsInsecureSkipVerify": "1" if skip_tls_verify else "0",
+                "HttpTlsTrustedCaCerts": "",
+                "HttpTlsServerName": "",
                 "description": description
             }
         }
         result = await opnsense_api("/caddy/ReverseProxy/addHandle", method="POST", data=data)
-        return f"Added handler → {backend_host}:{backend_port}"
+        uuid = result.get("uuid", "")
+        if not uuid and result.get("result") == "failed":
+            validations = result.get("validations", {})
+            return f"Failed to add handler: {validations or 'unknown error'}"
+        return f"Added handler → {backend_host}:{backend_port} (UUID: {uuid})"
 
     @mcp.tool()
     async def delete_caddy_reverse_proxy(uuid: str) -> str:
