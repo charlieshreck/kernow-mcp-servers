@@ -20,11 +20,41 @@ OUTLINE_API_KEY = os.environ.get("OUTLINE_API_KEY", "")
 SYNC_FOLDER = "outline"  # Silver Bullet folder for synced collection notes
 
 
-def _get_auth() -> Optional[tuple]:
-    """Get basic auth tuple if credentials configured."""
-    if SILVERBULLET_USER and ":" in SILVERBULLET_USER:
-        user, password = SILVERBULLET_USER.split(":", 1)
-        return (user, password)
+# Session cache for authenticated cookies
+_session_cookie: Optional[str] = None
+
+
+async def _get_auth_cookie() -> Optional[str]:
+    """Get authentication cookie via form-based login.
+
+    Silver Bullet uses form-based auth, not HTTP Basic Auth.
+    We POST to /.auth and get a JWT cookie in response.
+    """
+    global _session_cookie
+
+    if _session_cookie:
+        return _session_cookie
+
+    if not SILVERBULLET_USER or ":" not in SILVERBULLET_USER:
+        return None
+
+    user, password = SILVERBULLET_USER.split(":", 1)
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            f"{SILVERBULLET_URL}/.auth",
+            data={"username": user, "password": password}
+        )
+        resp.raise_for_status()
+
+        # Extract the auth cookie from Set-Cookie header
+        for cookie_header in resp.headers.get_list("set-cookie"):
+            if cookie_header.startswith("auth_"):
+                # Parse cookie value (before first ;)
+                cookie_value = cookie_header.split(";")[0]
+                _session_cookie = cookie_value
+                return _session_cookie
+
     return None
 
 
@@ -40,7 +70,12 @@ async def silverbullet_api(
     if get_meta:
         headers["X-Get-Meta"] = "true"
 
-    async with httpx.AsyncClient(timeout=30.0, auth=_get_auth()) as client:
+    # Get auth cookie
+    auth_cookie = await _get_auth_cookie()
+    if auth_cookie:
+        headers["Cookie"] = auth_cookie
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
         if method == "GET":
             resp = await client.get(url, headers=headers)
         elif method == "PUT":
@@ -60,8 +95,9 @@ async def silverbullet_api(
 async def get_status() -> dict:
     """Get Silver Bullet status for health checks."""
     try:
+        # /.ping doesn't require auth
         url = f"{SILVERBULLET_URL}/.ping"
-        async with httpx.AsyncClient(timeout=10.0, auth=_get_auth()) as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(url)
             if resp.status_code == 200:
                 return {"status": "healthy"}
@@ -106,8 +142,13 @@ async def _create_outline_collection(name: str, description: str = "") -> Dict:
 async def _get_silverbullet_sync_pages() -> List[str]:
     """Get all Silver Bullet pages in the sync folder."""
     url = f"{SILVERBULLET_URL}/.fs"
-    async with httpx.AsyncClient(timeout=30.0, auth=_get_auth()) as client:
-        resp = await client.get(url)
+    headers = {}
+    auth_cookie = await _get_auth_cookie()
+    if auth_cookie:
+        headers["Cookie"] = auth_cookie
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(url, headers=headers)
         resp.raise_for_status()
         files = resp.json()
 
@@ -148,8 +189,13 @@ def register_tools(mcp: FastMCP):
             JSON list of files with name, size, and modification time.
         """
         url = f"{SILVERBULLET_URL}/.fs"
-        async with httpx.AsyncClient(timeout=30.0, auth=_get_auth()) as client:
-            resp = await client.get(url)
+        headers = {}
+        auth_cookie = await _get_auth_cookie()
+        if auth_cookie:
+            headers["Cookie"] = auth_cookie
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(url, headers=headers)
             resp.raise_for_status()
             files = resp.json()
 
@@ -232,8 +278,13 @@ def register_tools(mcp: FastMCP):
         """
         # Get all files first
         url = f"{SILVERBULLET_URL}/.fs"
-        async with httpx.AsyncClient(timeout=30.0, auth=_get_auth()) as client:
-            resp = await client.get(url)
+        headers = {}
+        auth_cookie = await _get_auth_cookie()
+        if auth_cookie:
+            headers["Cookie"] = auth_cookie
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(url, headers=headers)
             resp.raise_for_status()
             files = resp.json()
 
