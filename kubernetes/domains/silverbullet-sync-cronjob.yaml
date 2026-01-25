@@ -1,0 +1,35 @@
+---
+# CronJob to sync Silver Bullet → Outline
+# Runs every 5 minutes to check for new SB pages in outline/ folder
+# and create corresponding Outline collections
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: silverbullet-outline-sync
+  namespace: ai-platform
+  labels:
+    app: knowledge-mcp
+    component: sync
+spec:
+  schedule: "*/5 * * * *"  # Every 5 minutes
+  concurrencyPolicy: Forbid  # Don't run if previous job still running
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: sync
+              image: curlimages/curl:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  echo "Triggering SB→Outline sync..."
+                  curl -s -X POST \
+                    http://knowledge-mcp.ai-platform.svc.cluster.local:8000/webhooks/silverbullet \
+                    -H "Content-Type: application/json"
+                  echo ""
+                  echo "Sync complete"
+          restartPolicy: OnFailure

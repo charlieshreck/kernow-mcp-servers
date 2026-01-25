@@ -341,30 +341,143 @@ def register_tools(mcp: FastMCP):
 
     @mcp.tool()
     async def sync_outline_to_silverbullet() -> str:
-        """Sync Outline collections to Silver Bullet pages.
+        """Sync Outline collections to Silver Bullet pages."""
+        return await do_sync_outline_to_silverbullet()
 
-        Creates a notes page in Silver Bullet for each Outline collection.
-        Pages are created in the 'outline/' folder with the collection name.
+    @mcp.tool()
+    async def sync_silverbullet_to_outline() -> str:
+        """Sync Silver Bullet pages to Outline collections."""
+        return await do_sync_silverbullet_to_outline()
 
-        Returns:
-            Summary of sync actions taken.
-        """
-        collections = await _get_outline_collections()
-        existing_pages = await _get_silverbullet_sync_pages()
-        existing_slugs = {_slugify(p) for p in existing_pages}
+    @mcp.tool()
+    async def sync_collections_bidirectional() -> str:
+        """Bidirectional sync between Outline collections and Silver Bullet pages."""
+        return await do_sync_bidirectional()
 
-        created = []
-        skipped = []
 
-        for coll in collections:
-            name = coll.get("name", "")
-            slug = _slugify(name)
+# =============================================================================
+# Standalone Sync Functions (callable from webhooks)
+# =============================================================================
 
-            if slug in existing_slugs:
-                skipped.append(name)
-                continue
+async def do_sync_outline_to_silverbullet() -> str:
+    """Sync Outline collections to Silver Bullet pages.
 
-            # Create notes page for this collection
+    Creates a notes page in Silver Bullet for each Outline collection.
+    Pages are created in the 'outline/' folder with the collection name.
+
+    Returns:
+        Summary of sync actions taken.
+    """
+    collections = await _get_outline_collections()
+    existing_pages = await _get_silverbullet_sync_pages()
+    existing_slugs = {_slugify(p) for p in existing_pages}
+
+    created = []
+    skipped = []
+
+    for coll in collections:
+        name = coll.get("name", "")
+        slug = _slugify(name)
+
+        if slug in existing_slugs:
+            skipped.append(name)
+            continue
+
+        # Create notes page for this collection
+        page_path = f"{SYNC_FOLDER}/{name}.md"
+        description = coll.get("description", "")
+        content = f"""# {name}
+
+> Notes page synced from Outline collection
+
+{description}
+
+---
+
+## Notes
+
+"""
+        try:
+            await silverbullet_api(f"/{page_path}", method="PUT", content=content)
+            created.append(name)
+        except Exception as e:
+            logger.error(f"Failed to create page for {name}: {e}")
+
+    return f"Synced Outline → Silver Bullet:\n- Created: {len(created)} ({', '.join(created) if created else 'none'})\n- Skipped (exists): {len(skipped)}"
+
+
+async def do_sync_silverbullet_to_outline() -> str:
+    """Sync Silver Bullet pages to Outline collections.
+
+    Creates an Outline collection for each page in the 'outline/' folder
+    that doesn't already have a matching collection.
+
+    Returns:
+        Summary of sync actions taken.
+    """
+    collections = await _get_outline_collections()
+    existing_slugs = {_slugify(c.get("name", "")) for c in collections}
+    existing_names = {c.get("name", "").lower() for c in collections}
+
+    sync_pages = await _get_silverbullet_sync_pages()
+
+    created = []
+    skipped = []
+
+    for page_name in sync_pages:
+        slug = _slugify(page_name)
+
+        # Check if collection already exists (by slug or exact name)
+        if slug in existing_slugs or page_name.lower() in existing_names:
+            skipped.append(page_name)
+            continue
+
+        # Read page content for description
+        try:
+            page_path = f"{SYNC_FOLDER}/{page_name}.md"
+            result = await silverbullet_api(f"/{page_path}", method="GET")
+            content = result.get("content", "")
+
+            # Extract first paragraph as description
+            lines = content.split("\n")
+            description = ""
+            for line in lines:
+                line = line.strip()
+                if line and not line.startswith("#") and not line.startswith(">"):
+                    description = line[:200]
+                    break
+
+            await _create_outline_collection(page_name, description)
+            created.append(page_name)
+        except Exception as e:
+            logger.error(f"Failed to create collection for {page_name}: {e}")
+
+    return f"Synced Silver Bullet → Outline:\n- Created: {len(created)} ({', '.join(created) if created else 'none'})\n- Skipped (exists): {len(skipped)}"
+
+
+async def do_sync_bidirectional() -> str:
+    """Bidirectional sync between Outline collections and Silver Bullet pages.
+
+    1. Creates Silver Bullet pages for new Outline collections
+    2. Creates Outline collections for new Silver Bullet pages in 'outline/' folder
+
+    Returns:
+        Combined summary of both sync directions.
+    """
+    # Sync Outline → Silver Bullet
+    collections = await _get_outline_collections()
+    sb_pages = await _get_silverbullet_sync_pages()
+    sb_slugs = {_slugify(p) for p in sb_pages}
+    outline_slugs = {_slugify(c.get("name", "")): c for c in collections}
+
+    results = {"outline_to_sb": [], "sb_to_outline": []}
+
+    # Outline → Silver Bullet
+    for coll in collections:
+        name = coll.get("name", "")
+        slug = _slugify(name)
+
+        if slug not in sb_slugs:
             page_path = f"{SYNC_FOLDER}/{name}.md"
             description = coll.get("description", "")
             content = f"""# {name}
@@ -380,46 +493,24 @@ def register_tools(mcp: FastMCP):
 """
             try:
                 await silverbullet_api(f"/{page_path}", method="PUT", content=content)
-                created.append(name)
+                results["outline_to_sb"].append(name)
             except Exception as e:
-                logger.error(f"Failed to create page for {name}: {e}")
+                logger.error(f"Failed to create SB page for {name}: {e}")
 
-        return f"Synced Outline → Silver Bullet:\n- Created: {len(created)} ({', '.join(created) if created else 'none'})\n- Skipped (exists): {len(skipped)}"
+    # Refresh SB pages after creation
+    sb_pages = await _get_silverbullet_sync_pages()
 
-    @mcp.tool()
-    async def sync_silverbullet_to_outline() -> str:
-        """Sync Silver Bullet pages to Outline collections.
+    # Silver Bullet → Outline
+    for page_name in sb_pages:
+        slug = _slugify(page_name)
 
-        Creates an Outline collection for each page in the 'outline/' folder
-        that doesn't already have a matching collection.
-
-        Returns:
-            Summary of sync actions taken.
-        """
-        collections = await _get_outline_collections()
-        existing_slugs = {_slugify(c.get("name", "")) for c in collections}
-        existing_names = {c.get("name", "").lower() for c in collections}
-
-        sync_pages = await _get_silverbullet_sync_pages()
-
-        created = []
-        skipped = []
-
-        for page_name in sync_pages:
-            slug = _slugify(page_name)
-
-            # Check if collection already exists (by slug or exact name)
-            if slug in existing_slugs or page_name.lower() in existing_names:
-                skipped.append(page_name)
-                continue
-
-            # Read page content for description
+        if slug not in outline_slugs:
             try:
                 page_path = f"{SYNC_FOLDER}/{page_name}.md"
                 result = await silverbullet_api(f"/{page_path}", method="GET")
                 content = result.get("content", "")
 
-                # Extract first paragraph as description
+                # Extract description
                 lines = content.split("\n")
                 description = ""
                 for line in lines:
@@ -429,86 +520,14 @@ def register_tools(mcp: FastMCP):
                         break
 
                 await _create_outline_collection(page_name, description)
-                created.append(page_name)
+                results["sb_to_outline"].append(page_name)
             except Exception as e:
                 logger.error(f"Failed to create collection for {page_name}: {e}")
 
-        return f"Synced Silver Bullet → Outline:\n- Created: {len(created)} ({', '.join(created) if created else 'none'})\n- Skipped (exists): {len(skipped)}"
+    o2s = results["outline_to_sb"]
+    s2o = results["sb_to_outline"]
 
-    @mcp.tool()
-    async def sync_collections_bidirectional() -> str:
-        """Bidirectional sync between Outline collections and Silver Bullet pages.
-
-        1. Creates Silver Bullet pages for new Outline collections
-        2. Creates Outline collections for new Silver Bullet pages in 'outline/' folder
-
-        Returns:
-            Combined summary of both sync directions.
-        """
-        # Sync Outline → Silver Bullet
-        collections = await _get_outline_collections()
-        sb_pages = await _get_silverbullet_sync_pages()
-        sb_slugs = {_slugify(p) for p in sb_pages}
-        outline_slugs = {_slugify(c.get("name", "")): c for c in collections}
-
-        results = {"outline_to_sb": [], "sb_to_outline": []}
-
-        # Outline → Silver Bullet
-        for coll in collections:
-            name = coll.get("name", "")
-            slug = _slugify(name)
-
-            if slug not in sb_slugs:
-                page_path = f"{SYNC_FOLDER}/{name}.md"
-                description = coll.get("description", "")
-                content = f"""# {name}
-
-> Notes page synced from Outline collection
-
-{description}
-
----
-
-## Notes
-
-"""
-                try:
-                    await silverbullet_api(f"/{page_path}", method="PUT", content=content)
-                    results["outline_to_sb"].append(name)
-                except Exception as e:
-                    logger.error(f"Failed to create SB page for {name}: {e}")
-
-        # Refresh SB pages after creation
-        sb_pages = await _get_silverbullet_sync_pages()
-
-        # Silver Bullet → Outline
-        for page_name in sb_pages:
-            slug = _slugify(page_name)
-
-            if slug not in outline_slugs:
-                try:
-                    page_path = f"{SYNC_FOLDER}/{page_name}.md"
-                    result = await silverbullet_api(f"/{page_path}", method="GET")
-                    content = result.get("content", "")
-
-                    # Extract description
-                    lines = content.split("\n")
-                    description = ""
-                    for line in lines:
-                        line = line.strip()
-                        if line and not line.startswith("#") and not line.startswith(">"):
-                            description = line[:200]
-                            break
-
-                    await _create_outline_collection(page_name, description)
-                    results["sb_to_outline"].append(page_name)
-                except Exception as e:
-                    logger.error(f"Failed to create collection for {page_name}: {e}")
-
-        o2s = results["outline_to_sb"]
-        s2o = results["sb_to_outline"]
-
-        return f"""Bidirectional Sync Complete:
+    return f"""Bidirectional Sync Complete:
 
 Outline → Silver Bullet:
 - Created {len(o2s)} pages: {', '.join(o2s) if o2s else 'none'}
