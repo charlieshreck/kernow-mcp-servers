@@ -78,11 +78,11 @@ spec:
                   name: qdrant-api-key
                   key: QDRANT_API_KEY
                   optional: true
-            - name: SILVERBULLET_USER
+            - name: SILVERBULLET_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: silverbullet-credentials
-                  key: SB_USER
+                  key: SB_AUTH_TOKEN
                   optional: true
           resources:
             requests:

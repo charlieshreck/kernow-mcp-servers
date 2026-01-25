@@ -10,7 +10,7 @@ from fastmcp import FastMCP
 logger = logging.getLogger(__name__)
 
 SILVERBULLET_URL = os.environ.get("SILVERBULLET_URL", "http://silverbullet.ai-platform.svc.cluster.local:3000")
-SILVERBULLET_USER = os.environ.get("SILVERBULLET_USER", "")
+SILVERBULLET_TOKEN = os.environ.get("SILVERBULLET_TOKEN", "")
 
 # Outline configuration for sync
 OUTLINE_URL = os.environ.get("OUTLINE_URL", "http://outline.outline.svc.cluster.local")
@@ -20,42 +20,16 @@ OUTLINE_API_KEY = os.environ.get("OUTLINE_API_KEY", "")
 SYNC_FOLDER = "outline"  # Silver Bullet folder for synced collection notes
 
 
-# Session cache for authenticated cookies
-_session_cookie: Optional[str] = None
+def _get_auth_headers() -> dict:
+    """Get authentication headers for Silver Bullet API.
 
-
-async def _get_auth_cookie() -> Optional[str]:
-    """Get authentication cookie via form-based login.
-
-    Silver Bullet uses form-based auth, not HTTP Basic Auth.
-    We POST to /.auth and get a JWT cookie in response.
+    Uses Bearer token auth for MCP access.
+    Token is configured via SB_AUTH_TOKEN env var in Silver Bullet.
     """
-    global _session_cookie
-
-    if _session_cookie:
-        return _session_cookie
-
-    if not SILVERBULLET_USER or ":" not in SILVERBULLET_USER:
-        return None
-
-    user, password = SILVERBULLET_USER.split(":", 1)
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(
-            f"{SILVERBULLET_URL}/.auth",
-            data={"username": user, "password": password}
-        )
-        resp.raise_for_status()
-
-        # Extract the auth cookie from Set-Cookie header
-        for cookie_header in resp.headers.get_list("set-cookie"):
-            if cookie_header.startswith("auth_"):
-                # Parse cookie value (before first ;)
-                cookie_value = cookie_header.split(";")[0]
-                _session_cookie = cookie_value
-                return _session_cookie
-
-    return None
+    headers = {}
+    if SILVERBULLET_TOKEN:
+        headers["Authorization"] = f"Bearer {SILVERBULLET_TOKEN}"
+    return headers
 
 
 async def silverbullet_api(
@@ -66,14 +40,9 @@ async def silverbullet_api(
 ) -> dict:
     """Make API call to Silver Bullet."""
     url = f"{SILVERBULLET_URL}/.fs{endpoint}"
-    headers = {}
+    headers = _get_auth_headers()
     if get_meta:
         headers["X-Get-Meta"] = "true"
-
-    # Get auth cookie
-    auth_cookie = await _get_auth_cookie()
-    if auth_cookie:
-        headers["Cookie"] = auth_cookie
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         if method == "GET":
@@ -142,10 +111,7 @@ async def _create_outline_collection(name: str, description: str = "") -> Dict:
 async def _get_silverbullet_sync_pages() -> List[str]:
     """Get all Silver Bullet pages in the sync folder."""
     url = f"{SILVERBULLET_URL}/.fs"
-    headers = {}
-    auth_cookie = await _get_auth_cookie()
-    if auth_cookie:
-        headers["Cookie"] = auth_cookie
+    headers = _get_auth_headers()
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.get(url, headers=headers)
@@ -189,10 +155,7 @@ def register_tools(mcp: FastMCP):
             JSON list of files with name, size, and modification time.
         """
         url = f"{SILVERBULLET_URL}/.fs"
-        headers = {}
-        auth_cookie = await _get_auth_cookie()
-        if auth_cookie:
-            headers["Cookie"] = auth_cookie
+        headers = _get_auth_headers()
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(url, headers=headers)
@@ -278,10 +241,7 @@ def register_tools(mcp: FastMCP):
         """
         # Get all files first
         url = f"{SILVERBULLET_URL}/.fs"
-        headers = {}
-        auth_cookie = await _get_auth_cookie()
-        if auth_cookie:
-            headers["Cookie"] = auth_cookie
+        headers = _get_auth_headers()
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(url, headers=headers)
