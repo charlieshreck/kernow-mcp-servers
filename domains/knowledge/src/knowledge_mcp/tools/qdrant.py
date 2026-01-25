@@ -115,8 +115,8 @@ def register_tools(mcp: FastMCP):
     """Register Qdrant tools with the MCP server."""
 
     @mcp.tool()
-    async def list_collections() -> List[dict]:
-        """List all available Qdrant collections with point counts."""
+    async def qdrant_list_collections() -> List[dict]:
+        """List all available Qdrant vector collections with point counts."""
         try:
             result = await qdrant_request("/collections")
             collections = []
@@ -695,14 +695,14 @@ def register_tools(mcp: FastMCP):
             return [{"error": str(e)}]
 
     @mcp.tool()
-    async def search_documents(
+    async def vector_search_documents(
         query: str,
         doc_type: Optional[str] = None,
         domain: Optional[str] = None,
         limit: int = 10,
         min_score: float = 0.5
     ) -> List[dict]:
-        """Search documents collection (solutions, artifacts, documentation).
+        """Vector search the documents collection (solutions, artifacts, documentation).
 
         Args:
             query: Search query
@@ -742,11 +742,11 @@ def register_tools(mcp: FastMCP):
                 "tags": r.get("payload", {}).get("tags", [])
             } for r in result.get("result", [])]
         except Exception as e:
-            logger.error(f"search_documents failed: {e}")
+            logger.error(f"vector_search_documents failed: {e}")
             return [{"error": str(e)}]
 
     @mcp.tool()
-    async def add_document(
+    async def vector_add_document(
         title: str,
         content: str,
         doc_type: str = "documentation",
@@ -805,7 +805,7 @@ def register_tools(mcp: FastMCP):
 
             return {"success": True, "id": doc_id, "content_hash": content_hash}
         except Exception as e:
-            logger.error(f"add_document failed: {e}")
+            logger.error(f"vector_add_document failed: {e}")
             return {"error": str(e)}
 
     # =========================================================================
