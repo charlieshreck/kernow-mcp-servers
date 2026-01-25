@@ -10,7 +10,7 @@ from fastmcp import FastMCP
 logger = logging.getLogger(__name__)
 
 SILVERBULLET_URL = os.environ.get("SILVERBULLET_URL", "http://silverbullet.ai-platform.svc.cluster.local:3000")
-SILVERBULLET_TOKEN = os.environ.get("SILVERBULLET_TOKEN", "")
+SILVERBULLET_USER = os.environ.get("SILVERBULLET_USER", "")
 
 # Outline configuration for sync
 OUTLINE_URL = os.environ.get("OUTLINE_URL", "http://outline.outline.svc.cluster.local")
@@ -19,17 +19,49 @@ OUTLINE_API_KEY = os.environ.get("OUTLINE_API_KEY", "")
 # Sync configuration
 SYNC_FOLDER = "outline"  # Silver Bullet folder for synced collection notes
 
+# Session cache for authenticated cookies
+_session_cookie: Optional[str] = None
 
-def _get_auth_headers() -> dict:
-    """Get authentication headers for Silver Bullet API.
 
-    Uses Bearer token auth for MCP access.
-    Token is configured via SB_AUTH_TOKEN env var in Silver Bullet.
+async def _get_auth_cookie() -> Optional[str]:
+    """Get authentication cookie via form-based login.
+
+    Silver Bullet uses form-based auth with cookie sessions.
+    We POST to /.auth with username/password and cache the JWT cookie.
     """
-    headers = {}
-    if SILVERBULLET_TOKEN:
-        headers["Authorization"] = f"Bearer {SILVERBULLET_TOKEN}"
-    return headers
+    global _session_cookie
+
+    if _session_cookie:
+        return _session_cookie
+
+    if not SILVERBULLET_USER or ":" not in SILVERBULLET_USER:
+        logger.warning("SILVERBULLET_USER not set or invalid format (expected user:pass)")
+        return None
+
+    user, password = SILVERBULLET_USER.split(":", 1)
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{SILVERBULLET_URL}/.auth",
+                data={"username": user, "password": password}
+            )
+            resp.raise_for_status()
+
+            # Extract the auth cookie from Set-Cookie header
+            for cookie_header in resp.headers.get_list("set-cookie"):
+                if cookie_header.startswith("auth_"):
+                    # Parse cookie value (before first ;)
+                    cookie_value = cookie_header.split(";")[0]
+                    _session_cookie = cookie_value
+                    logger.info("Silver Bullet auth cookie obtained")
+                    return _session_cookie
+
+        logger.warning("No auth cookie received from Silver Bullet")
+    except Exception as e:
+        logger.error(f"Failed to authenticate to Silver Bullet: {e}")
+
+    return None
 
 
 async def silverbullet_api(
@@ -40,11 +72,16 @@ async def silverbullet_api(
 ) -> dict:
     """Make API call to Silver Bullet."""
     url = f"{SILVERBULLET_URL}/.fs{endpoint}"
-    headers = _get_auth_headers()
+    headers = {}
     if get_meta:
         headers["X-Get-Meta"] = "true"
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    # Get auth cookie
+    auth_cookie = await _get_auth_cookie()
+    if auth_cookie:
+        headers["Cookie"] = auth_cookie
+
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
         if method == "GET":
             resp = await client.get(url, headers=headers)
         elif method == "PUT":
@@ -111,9 +148,12 @@ async def _create_outline_collection(name: str, description: str = "") -> Dict:
 async def _get_silverbullet_sync_pages() -> List[str]:
     """Get all Silver Bullet pages in the sync folder."""
     url = f"{SILVERBULLET_URL}/.fs"
-    headers = _get_auth_headers()
+    headers = {}
+    auth_cookie = await _get_auth_cookie()
+    if auth_cookie:
+        headers["Cookie"] = auth_cookie
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
         resp = await client.get(url, headers=headers)
         resp.raise_for_status()
         files = resp.json()
@@ -155,9 +195,12 @@ def register_tools(mcp: FastMCP):
             JSON list of files with name, size, and modification time.
         """
         url = f"{SILVERBULLET_URL}/.fs"
-        headers = _get_auth_headers()
+        headers = {}
+        auth_cookie = await _get_auth_cookie()
+        if auth_cookie:
+            headers["Cookie"] = auth_cookie
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
             resp = await client.get(url, headers=headers)
             resp.raise_for_status()
             files = resp.json()
@@ -241,9 +284,12 @@ def register_tools(mcp: FastMCP):
         """
         # Get all files first
         url = f"{SILVERBULLET_URL}/.fs"
-        headers = _get_auth_headers()
+        headers = {}
+        auth_cookie = await _get_auth_cookie()
+        if auth_cookie:
+            headers["Cookie"] = auth_cookie
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
             resp = await client.get(url, headers=headers)
             resp.raise_for_status()
             files = resp.json()
