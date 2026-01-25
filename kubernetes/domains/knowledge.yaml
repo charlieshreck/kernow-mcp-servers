@@ -21,6 +21,8 @@ data:
   VIKUNJA_URL: "http://vikunja.vikunja.svc.cluster.local:8080"
   # Outline
   OUTLINE_URL: "http://outline.ai-platform.svc.cluster.local"
+  # Silver Bullet
+  SILVERBULLET_URL: "http://silverbullet.ai-platform.svc.cluster.local:3000"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -75,6 +77,12 @@ spec:
                 secretKeyRef:
                   name: qdrant-api-key
                   key: QDRANT_API_KEY
+                  optional: true
+            - name: SILVERBULLET_USER
+              valueFrom:
+                secretKeyRef:
+                  name: silverbullet-credentials
+                  key: SB_USER
                   optional: true
           resources:
             requests:

@@ -10,7 +10,7 @@ from starlette.routing import Route, Mount
 from starlette.responses import JSONResponse
 import uvicorn
 
-from knowledge_mcp.tools import qdrant, neo4j, vikunja, outline
+from knowledge_mcp.tools import qdrant, neo4j, vikunja, outline, silverbullet
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,6 +29,7 @@ qdrant.register_tools(mcp)
 neo4j.register_tools(mcp)
 vikunja.register_tools(mcp)
 outline.register_tools(mcp)
+silverbullet.register_tools(mcp)
 
 
 # =============================================================================
@@ -46,12 +47,14 @@ async def ready(request):
     neo4j_status = await neo4j.get_status()
     vikunja_status = await vikunja.get_status()
     outline_status = await outline.get_status()
+    silverbullet_status = await silverbullet.get_status()
 
     components = {
         "qdrant": qdrant_status.get("status"),
         "neo4j": neo4j_status.get("status"),
         "vikunja": vikunja_status.get("status"),
         "outline": outline_status.get("status"),
+        "silverbullet": silverbullet_status.get("status"),
     }
 
     all_healthy = all(s == "healthy" for s in components.values())
