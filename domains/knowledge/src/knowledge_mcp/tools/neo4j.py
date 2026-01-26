@@ -276,3 +276,221 @@ def register_tools(mcp: FastMCP):
             return parse_results(result)
         except Exception as e:
             return [{"error": str(e)}]
+
+    # =========================================================================
+    # Project 02: Graph Retrieval for Multi-Path Search
+    # =========================================================================
+
+    @mcp.tool()
+    async def get_solutions_for_problem(
+        problem_id: str,
+        min_confidence: float = 0.0,
+        time_decay_half_life_days: float = 30.0
+    ) -> List[dict]:
+        """Get solutions linked to a Problem with time-decayed confidence.
+
+        Traverses Problem -> SOLVES <- Runbook relationships.
+        Returns solutions ordered by confidence = success_rate * time_decay.
+
+        Args:
+            problem_id: The Problem node ID
+            min_confidence: Minimum confidence threshold (0.0-1.0)
+            time_decay_half_life_days: Half-life for time decay calculation
+
+        Returns:
+            List of solutions with confidence scores
+        """
+        try:
+            cypher = """
+            MATCH (p:Problem {id: $problem_id})<-[:SOLVES]-(r:Runbook)
+            WITH r,
+                 coalesce(r.success_rate, 0.5) AS success_rate,
+                 coalesce(r.execution_count, 0) AS exec_count,
+                 r.last_executed AS last_used,
+                 CASE
+                   WHEN r.last_executed IS NOT NULL THEN
+                     duration.inDays(datetime(r.last_executed), datetime()).days
+                   ELSE 90
+                 END AS days_stale
+            WITH r, success_rate, exec_count, last_used, days_stale,
+                 success_rate * (2.0 ^ (-1.0 * days_stale / $half_life)) AS confidence
+            WHERE confidence >= $min_confidence
+            RETURN r.id AS runbook_id,
+                   r.title AS title,
+                   r.path AS path,
+                   r.automation_level AS automation_level,
+                   success_rate,
+                   exec_count AS execution_count,
+                   last_used,
+                   days_stale,
+                   confidence
+            ORDER BY confidence DESC
+            LIMIT 10
+            """
+            result = await neo4j_query(cypher, {
+                "problem_id": problem_id,
+                "min_confidence": min_confidence,
+                "half_life": time_decay_half_life_days
+            })
+
+            if result.get("errors"):
+                return [{"error": str(result["errors"])}]
+
+            return parse_results(result)
+        except Exception as e:
+            logger.error(f"get_solutions_for_problem failed: {e}")
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    async def get_proven_runbooks(
+        domain: str,
+        min_success_rate: float = 0.7,
+        min_executions: int = 3,
+        limit: int = 10
+    ) -> List[dict]:
+        """Get runbooks with high success rates in a domain.
+
+        Used by Path 3 (Graph Traversal) when domain confidence > 0.8.
+        Returns runbooks proven effective through execution history.
+
+        Args:
+            domain: Domain to filter by (infra, security, obs, dns, network, data)
+            min_success_rate: Minimum success rate threshold (0.0-1.0)
+            min_executions: Minimum execution count for statistical confidence
+            limit: Maximum results to return
+
+        Returns:
+            List of proven runbooks with success metrics
+        """
+        try:
+            cypher = """
+            MATCH (r:Runbook)
+            WHERE r.domain = $domain
+              AND coalesce(r.success_rate, 0) >= $min_success_rate
+              AND coalesce(r.execution_count, 0) >= $min_executions
+            WITH r,
+                 r.success_rate AS success_rate,
+                 r.execution_count AS execution_count,
+                 CASE
+                   WHEN r.last_executed IS NOT NULL THEN
+                     duration.inDays(datetime(r.last_executed), datetime()).days
+                   ELSE 90
+                 END AS days_stale
+            OPTIONAL MATCH (r)-[:SOLVES]->(p:Problem)
+            WITH r, success_rate, execution_count, days_stale,
+                 collect(p.description)[0..3] AS related_problems
+            RETURN r.id AS runbook_id,
+                   r.title AS title,
+                   r.path AS path,
+                   r.automation_level AS automation_level,
+                   r.domain AS domain,
+                   success_rate,
+                   execution_count,
+                   days_stale,
+                   related_problems
+            ORDER BY success_rate DESC, execution_count DESC
+            LIMIT $limit
+            """
+            result = await neo4j_query(cypher, {
+                "domain": domain,
+                "min_success_rate": min_success_rate,
+                "min_executions": min_executions,
+                "limit": limit
+            })
+
+            if result.get("errors"):
+                return [{"error": str(result["errors"])}]
+
+            return parse_results(result)
+        except Exception as e:
+            logger.error(f"get_proven_runbooks failed: {e}")
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    async def get_problems_by_domain(
+        domain: str,
+        limit: int = 20
+    ) -> List[dict]:
+        """Get Problems in a domain for graph traversal path.
+
+        Args:
+            domain: Domain to filter by
+            limit: Maximum results
+
+        Returns:
+            List of problems with their linked runbooks
+        """
+        try:
+            cypher = """
+            MATCH (p:Problem)
+            WHERE p.domain = $domain
+            OPTIONAL MATCH (p)<-[:SOLVES]-(r:Runbook)
+            WITH p, collect({
+                runbook_id: r.id,
+                title: r.title,
+                success_rate: r.success_rate
+            }) AS solutions
+            RETURN p.id AS problem_id,
+                   p.description AS description,
+                   p.domain AS domain,
+                   p.tags AS tags,
+                   p.weight AS weight,
+                   p.last_referenced AS last_referenced,
+                   solutions
+            ORDER BY p.weight DESC, p.last_referenced DESC
+            LIMIT $limit
+            """
+            result = await neo4j_query(cypher, {
+                "domain": domain,
+                "limit": limit
+            })
+
+            if result.get("errors"):
+                return [{"error": str(result["errors"])}]
+
+            return parse_results(result)
+        except Exception as e:
+            logger.error(f"get_problems_by_domain failed: {e}")
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    async def get_related_problems(
+        problem_id: str,
+        depth: int = 2
+    ) -> List[dict]:
+        """Find problems related to a given problem through shared solutions.
+
+        Traverses: Problem <- SOLVES - Runbook - SOLVES -> OtherProblem
+
+        Args:
+            problem_id: Starting problem ID
+            depth: Max relationship depth (1-3)
+
+        Returns:
+            List of related problems with relationship paths
+        """
+        try:
+            depth = min(max(depth, 1), 3)  # Clamp to 1-3
+
+            cypher = """
+            MATCH (p:Problem {id: $problem_id})
+            MATCH path = (p)<-[:SOLVES]-(r:Runbook)-[:SOLVES]->(other:Problem)
+            WHERE other.id <> p.id
+            WITH other, r, length(path) AS hops
+            RETURN DISTINCT other.id AS problem_id,
+                   other.description AS description,
+                   other.domain AS domain,
+                   r.title AS via_runbook,
+                   hops
+            ORDER BY hops ASC, other.weight DESC
+            LIMIT 10
+            """
+            result = await neo4j_query(cypher, {"problem_id": problem_id})
+
+            if result.get("errors"):
+                return [{"error": str(result["errors"])}]
+
+            return parse_results(result)
+        except Exception as e:
+            logger.error(f"get_related_problems failed: {e}")
+            return [{"error": str(e)}]

@@ -11,7 +11,7 @@ from starlette.responses import JSONResponse
 from starlette.requests import Request
 import uvicorn
 
-from knowledge_mcp.tools import qdrant, neo4j, vikunja, outline, silverbullet
+from knowledge_mcp.tools import qdrant, neo4j, vikunja, outline, silverbullet, retrieval
 from knowledge_mcp.tools.silverbullet import (
     do_sync_outline_to_silverbullet,
     do_sync_silverbullet_to_outline,
@@ -35,6 +35,7 @@ neo4j.register_tools(mcp)
 vikunja.register_tools(mcp)
 outline.register_tools(mcp)
 silverbullet.register_tools(mcp)
+retrieval.register_tools(mcp)
 
 
 # =============================================================================
@@ -53,6 +54,7 @@ async def ready(request):
     vikunja_status = await vikunja.get_status()
     outline_status = await outline.get_status()
     silverbullet_status = await silverbullet.get_status()
+    retrieval_status = await retrieval.get_status()
 
     components = {
         "qdrant": qdrant_status.get("status"),
@@ -60,6 +62,7 @@ async def ready(request):
         "vikunja": vikunja_status.get("status"),
         "outline": outline_status.get("status"),
         "silverbullet": silverbullet_status.get("status"),
+        "retrieval": retrieval_status.get("status"),
     }
 
     all_healthy = all(s == "healthy" for s in components.values())
@@ -122,6 +125,66 @@ async def silverbullet_webhook(request: Request):
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
+async def reconcile_webhook(request: Request):
+    """Trigger Qdrant↔Neo4j dual-index reconciliation.
+
+    Called by:
+    - Weekly CronJob (knowledge-reconcile)
+    - Manual trigger when needed
+
+    Query params:
+    - dry_run=true: Detect issues without fixing
+    - fix_orphans=false: Skip deleting orphans
+    - fix_missing=false: Skip re-indexing missing
+    - fix_stale=false: Skip re-indexing stale
+
+    URL: http://knowledge-mcp.ai-platform.svc.cluster.local:8000/webhooks/reconcile
+    """
+    from knowledge_mcp.jobs.reconcile import reconcile_dual_index
+
+    try:
+        # Parse query params
+        params = request.query_params
+        dry_run = params.get("dry_run", "false").lower() == "true"
+        fix_orphans = params.get("fix_orphans", "true").lower() != "false"
+        fix_missing = params.get("fix_missing", "true").lower() != "false"
+        fix_stale = params.get("fix_stale", "true").lower() != "false"
+
+        logger.info(f"Starting reconciliation: dry_run={dry_run}")
+
+        result = await reconcile_dual_index(
+            dry_run=dry_run,
+            fix_orphans=fix_orphans,
+            fix_missing=fix_missing,
+            fix_stale=fix_stale
+        )
+
+        return JSONResponse({
+            "status": "completed",
+            "started_at": result.started_at,
+            "completed_at": result.completed_at,
+            "duration_seconds": result.duration_seconds,
+            "qdrant_total": result.qdrant_total,
+            "neo4j_problems": result.neo4j_problems,
+            "neo4j_runbooks": result.neo4j_runbooks,
+            "issues": {
+                "orphaned_qdrant": len(result.orphaned_qdrant),
+                "missing_qdrant": len(result.missing_qdrant),
+                "hash_mismatches": len(result.hash_mismatches),
+            },
+            "actions": {
+                "deleted_orphans": result.deleted_orphans,
+                "reindexed_missing": result.reindexed_missing,
+                "reindexed_stale": result.reindexed_stale,
+            },
+            "errors": result.errors,
+        })
+
+    except Exception as e:
+        logger.error(f"Reconciliation error: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
 # =============================================================================
 # Main Entry Point
 # =============================================================================
@@ -136,6 +199,7 @@ def main():
         Route("/ready", ready, methods=["GET"]),
         Route("/webhooks/outline", outline_webhook, methods=["POST"]),
         Route("/webhooks/silverbullet", silverbullet_webhook, methods=["POST", "GET"]),
+        Route("/webhooks/reconcile", reconcile_webhook, methods=["POST", "GET"]),
     ]
 
     mcp_app = mcp.http_app()

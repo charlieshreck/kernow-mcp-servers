@@ -8,6 +8,35 @@ from datetime import datetime
 
 import httpx
 from fastmcp import FastMCP
+from pydantic import BaseModel, Field, field_validator
+
+
+class ValidationResult(BaseModel):
+    """Structured validation result for runbook execution verification (Gemini R4)."""
+    validated: bool = Field(..., description="Whether validation was performed")
+    validated_at: str = Field(..., description="ISO timestamp of validation")
+    validated_by: str = Field(..., description="Who triggered: langgraph-auto, human, pattern-detector")
+    verdict: str = Field(..., description="confirmed, false_positive, false_negative, uncertain")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score 0.0-1.0")
+    actual_success: Optional[bool] = Field(None, description="Ground truth success")
+    signal_count: int = Field(0, ge=0, description="Number of ground truth signals checked")
+    ground_truth: Dict[str, Any] = Field(default_factory=dict, description="Raw ground truth data")
+
+    @field_validator("verdict")
+    @classmethod
+    def validate_verdict(cls, v: str) -> str:
+        allowed = {"confirmed", "false_positive", "false_negative", "uncertain"}
+        if v not in allowed:
+            raise ValueError(f"verdict must be one of {allowed}, got '{v}'")
+        return v
+
+    @field_validator("validated_by")
+    @classmethod
+    def validate_triggered_by(cls, v: str) -> str:
+        allowed = {"langgraph-auto", "human", "pattern-detector"}
+        if v not in allowed:
+            raise ValueError(f"validated_by must be one of {allowed}, got '{v}'")
+        return v
 
 logger = logging.getLogger(__name__)
 
@@ -268,7 +297,7 @@ def register_tools(mcp: FastMCP):
         configs = {
             "manual": {"requires_approval": True, "min_success_rate": 0, "min_executions": 0},
             "prompted": {"requires_approval": True, "min_success_rate": 0.7, "min_executions": 5},
-            "standard": {"requires_approval": False, "min_success_rate": 0.9, "min_executions": 10},
+            "standard": {"requires_approval": False, "min_success_rate": 0.85, "min_executions": 10},
             "autonomous": {"requires_approval": False, "min_success_rate": 0.95, "min_executions": 20}
         }
         return configs.get(level, {"error": f"Unknown level: {level}"})
@@ -586,9 +615,26 @@ def register_tools(mcp: FastMCP):
         event_id: str,
         score: Optional[float] = None,
         feedback: Optional[str] = None,
-        resolution: Optional[str] = None
+        resolution: Optional[str] = None,
+        validation: Optional[dict] = None
     ) -> dict:
-        """Update an existing event with feedback or outcome."""
+        """Update an existing event with feedback, outcome, or validation results.
+
+        Args:
+            event_id: The event UUID
+            score: Feedback score 0.0-1.0
+            feedback: Human feedback text
+            resolution: Resolution status (completed, failed, validated, needs_review)
+            validation: Structured validation result (Pydantic-enforced). Fields:
+                - validated (bool): Whether validation was performed
+                - validated_at (str): ISO timestamp
+                - validated_by (str): Who triggered (langgraph-auto, human, pattern-detector)
+                - verdict (str): confirmed, false_positive, false_negative, uncertain
+                - confidence (float): 0.0-1.0
+                - actual_success (bool|null): Ground truth success
+                - signal_count (int): Number of ground truth signals checked
+                - ground_truth (dict): Raw ground truth data
+        """
         try:
             updates = {}
             if score is not None:
@@ -597,6 +643,10 @@ def register_tools(mcp: FastMCP):
                 updates["feedback"] = feedback
             if resolution:
                 updates["resolution"] = resolution
+            if validation is not None:
+                # Pydantic validation (Gemini R4) - raises ValidationError if invalid
+                ValidationResult(**validation)
+                updates["validation"] = validation
             updates["updated_at"] = datetime.utcnow().isoformat()
 
             await qdrant_request(f"/collections/agent_events/points/{event_id}", "PUT", {
@@ -1093,4 +1143,366 @@ def register_tools(mcp: FastMCP):
                     results[collection] = []
             return results
         except Exception as e:
+            return {"error": str(e)}
+
+    # =========================================================================
+    # Project 02: Runbook Dual-Indexing CRUD Functions
+    # Mirror the Problem pattern: atomic writes to Neo4j + Qdrant
+    # =========================================================================
+
+    @mcp.tool()
+    async def create_runbook_with_dual_index(
+        title: str,
+        description: str,
+        domain: str,
+        solution: Optional[str] = None,
+        trigger_pattern: Optional[str] = None,
+        path: Optional[str] = None,
+        automation_level: str = "manual",
+        tags: Optional[List[str]] = None,
+        source: str = "manual"
+    ) -> dict:
+        """Create a Runbook in Neo4j and dual-index in Qdrant.
+
+        Atomic operation: creates in Neo4j first, then indexes in Qdrant.
+        If Qdrant fails, rolls back the Neo4j creation.
+
+        Args:
+            title: Runbook title
+            description: Detailed description (used for embedding)
+            domain: Domain (infra, security, obs, dns, network, data)
+            solution: Solution steps (optional, also embedded)
+            trigger_pattern: Pattern that triggers this runbook
+            path: File path to runbook source
+            automation_level: manual, prompted, standard, autonomous
+            tags: Optional tags for categorization
+            source: Source of the runbook (manual, migration, learned)
+
+        Returns:
+            Dict with runbook_id, neo4j_id, qdrant_indexed status
+        """
+        import hashlib
+
+        runbook_id = str(uuid4())
+
+        # Combine for embedding
+        embed_text = f"{title}\n{description}"
+        if solution:
+            embed_text += f"\n{solution}"
+        if trigger_pattern:
+            embed_text += f"\nTrigger: {trigger_pattern}"
+
+        content_hash = hashlib.sha256(embed_text.encode()).hexdigest()[:16]
+
+        try:
+            # Step 1: Create Runbook node in Neo4j
+            neo4j_result = await _neo4j_query("""
+                CREATE (r:Runbook {
+                    id: $runbook_id,
+                    title: $title,
+                    description: $description,
+                    solution: $solution,
+                    trigger_pattern: $trigger_pattern,
+                    path: $path,
+                    domain: $domain,
+                    automation_level: $automation_level,
+                    tags: $tags,
+                    source: $source,
+                    content_hash: $content_hash,
+                    created_at: datetime(),
+                    execution_count: 0,
+                    success_count: 0,
+                    success_rate: 0.0
+                })
+                RETURN r.id as id
+            """, {
+                "runbook_id": runbook_id,
+                "title": title,
+                "description": description,
+                "solution": solution or "",
+                "trigger_pattern": trigger_pattern or "",
+                "path": path or "",
+                "domain": domain,
+                "automation_level": automation_level,
+                "tags": tags or [],
+                "source": source,
+                "content_hash": content_hash
+            })
+
+            if neo4j_result.get("errors"):
+                return {"error": f"Neo4j creation failed: {neo4j_result['errors']}"}
+
+            # Step 2: Generate embedding and index in Qdrant knowledge_nodes
+            try:
+                embedding = await get_embedding(embed_text)
+
+                await qdrant_request("/collections/knowledge_nodes/points", "PUT", {
+                    "points": [{
+                        "id": runbook_id,
+                        "vector": embedding,
+                        "payload": {
+                            "type": "runbook",
+                            "neo4j_id": runbook_id,
+                            "title": title,
+                            "description": description[:1000],
+                            "domain": domain,
+                            "automation_level": automation_level,
+                            "tags": tags or [],
+                            "source": source,
+                            "content_hash": content_hash,
+                            "indexed_at": datetime.utcnow().isoformat()
+                        }
+                    }]
+                })
+
+            except Exception as qdrant_error:
+                # Rollback: Delete from Neo4j
+                logger.error(f"Qdrant indexing failed, rolling back Neo4j: {qdrant_error}")
+                await _neo4j_query("MATCH (r:Runbook {id: $id}) DELETE r", {"id": runbook_id})
+                return {"error": f"Dual-index failed (rolled back): {qdrant_error}"}
+
+            logger.info(f"Created Runbook with dual-index: {runbook_id}")
+            return {
+                "success": True,
+                "runbook_id": runbook_id,
+                "neo4j_id": runbook_id,
+                "qdrant_indexed": True,
+                "content_hash": content_hash
+            }
+
+        except Exception as e:
+            logger.error(f"create_runbook_with_dual_index failed: {e}")
+            return {"error": str(e)}
+
+    @mcp.tool()
+    async def update_runbook_with_reindex(
+        runbook_id: str,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        solution: Optional[str] = None,
+        domain: Optional[str] = None,
+        automation_level: Optional[str] = None,
+        tags: Optional[List[str]] = None
+    ) -> dict:
+        """Update a Runbook in Neo4j and re-index in Qdrant if content changed.
+
+        Only re-embeds if title, description, or solution changes (detected via content_hash).
+
+        Args:
+            runbook_id: The Runbook's ID
+            title: New title (triggers re-embedding)
+            description: New description (triggers re-embedding)
+            solution: New solution (triggers re-embedding)
+            domain: New domain
+            automation_level: New automation level
+            tags: New tags
+
+        Returns:
+            Dict with update status and whether re-indexing occurred
+        """
+        import hashlib
+
+        try:
+            # Get current state
+            current = await _neo4j_query("""
+                MATCH (r:Runbook {id: $id})
+                RETURN r.title as title, r.description as description,
+                       r.solution as solution, r.content_hash as content_hash,
+                       r.domain as domain, r.automation_level as automation_level,
+                       r.tags as tags
+            """, {"id": runbook_id})
+
+            records = _parse_neo4j_results(current)
+            if not records:
+                return {"error": "Runbook not found"}
+
+            old = records[0]
+            old_hash = old.get("content_hash", "")
+
+            # Determine new values (use old if not provided)
+            new_title = title if title is not None else old.get("title", "")
+            new_desc = description if description is not None else old.get("description", "")
+            new_solution = solution if solution is not None else old.get("solution", "")
+
+            # Compute new hash
+            embed_text = f"{new_title}\n{new_desc}"
+            if new_solution:
+                embed_text += f"\n{new_solution}"
+            new_hash = hashlib.sha256(embed_text.encode()).hexdigest()[:16]
+
+            needs_reindex = new_hash != old_hash
+
+            # Build update SET clause dynamically
+            updates = []
+            params = {"id": runbook_id}
+
+            if title is not None:
+                updates.append("r.title = $title")
+                params["title"] = title
+
+            if description is not None:
+                updates.append("r.description = $description")
+                params["description"] = description
+
+            if solution is not None:
+                updates.append("r.solution = $solution")
+                params["solution"] = solution
+
+            if domain is not None:
+                updates.append("r.domain = $domain")
+                params["domain"] = domain
+
+            if automation_level is not None:
+                updates.append("r.automation_level = $automation_level")
+                params["automation_level"] = automation_level
+
+            if tags is not None:
+                updates.append("r.tags = $tags")
+                params["tags"] = tags
+
+            if needs_reindex:
+                updates.append("r.content_hash = $content_hash")
+                params["content_hash"] = new_hash
+
+            if not updates:
+                return {"success": True, "message": "No changes to apply"}
+
+            updates.append("r.updated_at = datetime()")
+
+            # Update Neo4j
+            await _neo4j_query(f"""
+                MATCH (r:Runbook {{id: $id}})
+                SET {', '.join(updates)}
+            """, params)
+
+            # Re-index in Qdrant if content changed
+            if needs_reindex:
+                embedding = await get_embedding(embed_text)
+
+                # Get existing payload to merge
+                try:
+                    existing = await qdrant_request(
+                        f"/collections/knowledge_nodes/points/{runbook_id}"
+                    )
+                    old_payload = existing.get("result", {}).get("payload", {})
+                except:
+                    old_payload = {}
+
+                await qdrant_request("/collections/knowledge_nodes/points", "PUT", {
+                    "points": [{
+                        "id": runbook_id,
+                        "vector": embedding,
+                        "payload": {
+                            **old_payload,
+                            "title": new_title,
+                            "description": new_desc[:1000],
+                            "domain": domain or old_payload.get("domain"),
+                            "automation_level": automation_level or old_payload.get("automation_level"),
+                            "tags": tags or old_payload.get("tags", []),
+                            "content_hash": new_hash,
+                            "indexed_at": datetime.utcnow().isoformat()
+                        }
+                    }]
+                })
+
+            logger.info(f"Updated Runbook {runbook_id}, reindexed: {needs_reindex}")
+            return {
+                "success": True,
+                "runbook_id": runbook_id,
+                "reindexed": needs_reindex
+            }
+
+        except Exception as e:
+            logger.error(f"update_runbook_with_reindex failed: {e}")
+            return {"error": str(e)}
+
+    @mcp.tool()
+    async def delete_runbook_with_dual_index(runbook_id: str) -> dict:
+        """Delete a Runbook from both Neo4j and Qdrant.
+
+        Deletes from Qdrant first (less critical), then Neo4j.
+        Also removes any SOLVES relationships.
+
+        Args:
+            runbook_id: The Runbook's ID
+
+        Returns:
+            Dict with deletion status for both stores
+        """
+        qdrant_deleted = False
+        neo4j_deleted = False
+
+        try:
+            # Step 1: Delete from Qdrant (less critical, do first)
+            try:
+                await qdrant_request(
+                    f"/collections/knowledge_nodes/points/delete",
+                    "POST",
+                    {"points": [runbook_id]}
+                )
+                qdrant_deleted = True
+            except Exception as e:
+                logger.warning(f"Qdrant deletion failed (continuing): {e}")
+
+            # Step 2: Delete from Neo4j (including relationships)
+            result = await _neo4j_query("""
+                MATCH (r:Runbook {id: $id})
+                OPTIONAL MATCH (r)-[rel]-()
+                DELETE rel, r
+                RETURN count(r) as deleted
+            """, {"id": runbook_id})
+
+            records = _parse_neo4j_results(result)
+            neo4j_deleted = records and records[0].get("deleted", 0) > 0
+
+            if not neo4j_deleted and not qdrant_deleted:
+                return {"error": "Runbook not found in either store"}
+
+            logger.info(f"Deleted Runbook {runbook_id}: neo4j={neo4j_deleted}, qdrant={qdrant_deleted}")
+            return {
+                "success": True,
+                "runbook_id": runbook_id,
+                "neo4j_deleted": neo4j_deleted,
+                "qdrant_deleted": qdrant_deleted
+            }
+
+        except Exception as e:
+            logger.error(f"delete_runbook_with_dual_index failed: {e}")
+            return {"error": str(e)}
+
+    @mcp.tool()
+    async def link_runbook_to_problem(runbook_id: str, problem_id: str) -> dict:
+        """Create SOLVES relationship between Runbook and Problem.
+
+        Args:
+            runbook_id: The Runbook's ID
+            problem_id: The Problem's ID
+
+        Returns:
+            Dict with success status
+        """
+        try:
+            result = await _neo4j_query("""
+                MATCH (r:Runbook {id: $runbook_id})
+                MATCH (p:Problem {id: $problem_id})
+                MERGE (r)-[:SOLVES]->(p)
+                RETURN r.id as runbook_id, p.id as problem_id
+            """, {
+                "runbook_id": runbook_id,
+                "problem_id": problem_id
+            })
+
+            records = _parse_neo4j_results(result)
+            if not records:
+                return {"error": "Runbook or Problem not found"}
+
+            logger.info(f"Linked Runbook {runbook_id} -> Problem {problem_id}")
+            return {
+                "success": True,
+                "runbook_id": runbook_id,
+                "problem_id": problem_id
+            }
+
+        except Exception as e:
+            logger.error(f"link_runbook_to_problem failed: {e}")
             return {"error": str(e)}
