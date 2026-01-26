@@ -12,6 +12,7 @@ from starlette.requests import Request
 import uvicorn
 
 from knowledge_mcp.tools import qdrant, neo4j, vikunja, outline, silverbullet, retrieval
+from knowledge_mcp.tools.qdrant import qdrant_request
 from knowledge_mcp.tools.silverbullet import (
     do_sync_outline_to_silverbullet,
     do_sync_silverbullet_to_outline,
@@ -71,6 +72,47 @@ async def ready(request):
         "status": "ready" if all_healthy else "degraded",
         "components": components
     }, status_code=200 if all_healthy else 503)
+
+
+# =============================================================================
+# REST API Endpoints (used by fumadocs)
+# =============================================================================
+
+async def api_list_runbooks(request: Request):
+    """REST endpoint for listing runbooks."""
+    limit = int(request.query_params.get("limit", "100"))
+    try:
+        result = await qdrant_request("/collections/runbooks/points/scroll", "POST", {
+            "limit": limit,
+            "with_payload": True
+        })
+        points = result.get("result", {}).get("points", [])
+        runbooks = [{
+            "id": str(p.get("id")),
+            "title": p.get("payload", {}).get("title", ""),
+            "trigger_pattern": p.get("payload", {}).get("trigger_pattern", ""),
+            "solution": p.get("payload", {}).get("solution", "")[:500],
+            "automation_level": p.get("payload", {}).get("automation_level", "manual"),
+            "path": p.get("payload", {}).get("path", ""),
+            "domain": p.get("payload", {}).get("domain", ""),
+        } for p in points]
+        return JSONResponse({"status": "ok", "runbooks": runbooks, "count": len(runbooks)})
+    except Exception as e:
+        logger.error(f"List runbooks error: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+async def api_get_runbook(request: Request):
+    """REST endpoint for getting a single runbook by ID."""
+    runbook_id = request.path_params["runbook_id"]
+    try:
+        result = await qdrant_request(f"/collections/runbooks/points/{runbook_id}")
+        point = result.get("result", {})
+        payload = point.get("payload", {})
+        return JSONResponse({"status": "ok", "runbook": payload})
+    except Exception as e:
+        logger.error(f"Get runbook error: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
 # =============================================================================
@@ -197,6 +239,8 @@ def main():
     rest_routes = [
         Route("/health", health, methods=["GET"]),
         Route("/ready", ready, methods=["GET"]),
+        Route("/api/runbooks/{runbook_id}", api_get_runbook, methods=["GET"]),
+        Route("/api/runbooks", api_list_runbooks, methods=["GET"]),
         Route("/webhooks/outline", outline_webhook, methods=["POST"]),
         Route("/webhooks/silverbullet", silverbullet_webhook, methods=["POST", "GET"]),
         Route("/webhooks/reconcile", reconcile_webhook, methods=["POST", "GET"]),
