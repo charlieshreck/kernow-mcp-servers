@@ -473,13 +473,23 @@ def register_tools(mcp: FastMCP):
             hosts = []
             for rule in i["spec"].get("rules", []):
                 host = rule.get("host", "*")
-                paths = [p.get("path", "/") for p in rule.get("http", {}).get("paths", [])]
-                hosts.append({"host": host, "paths": paths})
+                path_entries = []
+                for p in rule.get("http", {}).get("paths", []):
+                    entry = {"path": p.get("path", "/")}
+                    backend = p.get("backend", {}).get("service", {})
+                    if backend:
+                        entry["service"] = backend.get("name", "")
+                        port = backend.get("port", {})
+                        entry["port"] = port.get("number") or port.get("name", "")
+                    path_entries.append(entry)
+                hosts.append({"host": host, "paths": path_entries})
+            tls_hosts = [t.get("hosts", []) for t in i["spec"].get("tls", [])]
             result.append({
                 "name": i["metadata"]["name"],
                 "namespace": i["metadata"]["namespace"],
                 "class": i["spec"].get("ingressClassName"),
-                "hosts": hosts
+                "hosts": hosts,
+                "tls": len(tls_hosts) > 0
             })
         return result
 
