@@ -1,6 +1,7 @@
 """Proxmox VE hypervisor management tools."""
 
 import os
+import json
 import logging
 from typing import Optional, List
 from enum import Enum
@@ -98,7 +99,7 @@ def register_tools(mcp: FastMCP):
         nodes = result.get("data", [])
 
         if params.response_format == ResponseFormat.json:
-            return nodes
+            return json.dumps(nodes)
 
         output = ["# Proxmox Nodes\n"]
         for node in nodes:
@@ -135,7 +136,7 @@ def register_tools(mcp: FastMCP):
                         vms.append({"node": node["node"], **vm})
 
         if params.response_format == ResponseFormat.json:
-            return vms
+            return json.dumps(vms)
 
         output = ["# Virtual Machines\n"]
         for vm in sorted(vms, key=lambda x: x.get("vmid", 0)):
@@ -199,7 +200,7 @@ def register_tools(mcp: FastMCP):
                         containers.append({"node": node["node"], **ct})
 
         if params.response_format == ResponseFormat.json:
-            return containers
+            return json.dumps(containers)
 
         output = ["# LXC Containers\n"]
         for ct in sorted(containers, key=lambda x: x.get("vmid", 0)):
@@ -253,7 +254,7 @@ def register_tools(mcp: FastMCP):
         storage = result.get("data", [])
 
         if params.response_format == ResponseFormat.json:
-            return storage
+            return json.dumps(storage)
 
         output = ["# Storage Pools\n"]
         for s in storage:
@@ -272,7 +273,7 @@ def register_tools(mcp: FastMCP):
         data = result.get("data", {})
 
         if params.response_format == ResponseFormat.json:
-            return data
+            return json.dumps(data)
 
         used = data.get("used", 0) / (1024**3)
         total = data.get("total", 0) / (1024**3)
@@ -352,7 +353,7 @@ def register_tools(mcp: FastMCP):
                     all_tasks.append(task)
 
         if params.response_format == ResponseFormat.json:
-            return all_tasks
+            return json.dumps(all_tasks)
 
         output = ["# Recent Tasks\n"]
         for task in sorted(all_tasks, key=lambda x: x.get("starttime", 0), reverse=True)[:20]:
@@ -372,7 +373,7 @@ def register_tools(mcp: FastMCP):
         status = result.get("data", [])
 
         if params.response_format == ResponseFormat.json:
-            return status
+            return json.dumps(status)
 
         output = ["# Cluster Status\n"]
         for item in status:

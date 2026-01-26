@@ -1,6 +1,7 @@
 """TrueNAS storage management tools."""
 
 import os
+import json
 import logging
 from typing import Optional, List
 from enum import Enum
@@ -91,7 +92,7 @@ def register_tools(mcp: FastMCP):
         pools = await truenas_api(params.instance, "/pool")
 
         if params.response_format == ResponseFormat.json:
-            return pools
+            return json.dumps(pools)
 
         output = [f"# ZFS Pools ({params.instance})\n"]
         for pool in pools:
@@ -114,7 +115,7 @@ def register_tools(mcp: FastMCP):
             datasets = [d for d in datasets if d.get("pool") == params.pool]
 
         if params.response_format == ResponseFormat.json:
-            return datasets
+            return json.dumps(datasets)
 
         output = [f"# Datasets ({params.instance})\n"]
         for ds in datasets[:30]:  # Limit output
@@ -131,7 +132,7 @@ def register_tools(mcp: FastMCP):
         nfs_shares = await truenas_api(params.instance, "/sharing/nfs")
 
         if params.response_format == ResponseFormat.json:
-            return {"smb": smb_shares, "nfs": nfs_shares}
+            return json.dumps({"smb": smb_shares, "nfs": nfs_shares})
 
         output = [f"# Shares ({params.instance})\n"]
 
@@ -153,7 +154,7 @@ def register_tools(mcp: FastMCP):
         alerts = await truenas_api(params.instance, "/alert/list")
 
         if params.response_format == ResponseFormat.json:
-            return alerts
+            return json.dumps(alerts)
 
         if not alerts:
             return f"No active alerts on {params.instance}"
@@ -200,7 +201,7 @@ def register_tools(mcp: FastMCP):
             snapshots = [s for s in snapshots if s.get("dataset") == params.dataset]
 
         if params.response_format == ResponseFormat.json:
-            return snapshots[:50]
+            return json.dumps(snapshots[:50])
 
         output = [f"# Snapshots ({params.instance})\n"]
         for snap in snapshots[:30]:
@@ -217,7 +218,7 @@ def register_tools(mcp: FastMCP):
         pools = await truenas_api(params.instance, "/pool")
 
         if params.response_format == ResponseFormat.json:
-            return pools
+            return json.dumps(pools)
 
         output = [f"# Disk Usage ({params.instance})\n"]
         total_used = 0

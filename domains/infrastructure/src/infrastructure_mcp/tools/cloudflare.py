@@ -1,6 +1,7 @@
 """Cloudflare DNS and tunnel management tools."""
 
 import os
+import json
 import logging
 from typing import Optional, List
 from enum import Enum
@@ -120,7 +121,7 @@ def register_tools(mcp: FastMCP):
         zones = result.get("result", [])
 
         if params.response_format == ResponseFormat.json:
-            return zones
+            return json.dumps(zones)
 
         output = ["# Cloudflare Zones\n"]
         for zone in zones:
@@ -140,7 +141,7 @@ def register_tools(mcp: FastMCP):
         records = result.get("result", [])
 
         if params.response_format == ResponseFormat.json:
-            return records
+            return json.dumps(records)
 
         output = ["# DNS Records\n"]
         for rec in sorted(records, key=lambda x: (x.get("type", ""), x.get("name", ""))):
@@ -156,7 +157,7 @@ def register_tools(mcp: FastMCP):
         tunnels = result.get("result", [])
 
         if params.response_format == ResponseFormat.json:
-            return tunnels
+            return json.dumps(tunnels)
 
         output = ["# Cloudflare Tunnels\n"]
         for tunnel in tunnels:
@@ -191,7 +192,7 @@ def register_tools(mcp: FastMCP):
         records = result.get("result", [])
 
         if params.response_format == ResponseFormat.json:
-            return records
+            return json.dumps(records)
 
         if not records:
             return "No matching DNS records found."
