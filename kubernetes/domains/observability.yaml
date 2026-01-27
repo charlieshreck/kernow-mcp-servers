@@ -45,6 +45,14 @@ spec:
         app: observability-mcp
         component: mcp
     spec:
+      hostAliases:
+        - ip: "10.30.0.90"
+          hostnames:
+            - coroot.monit.kernow.io
+            - grafana.monit.kernow.io
+            - victoriametrics.monit.kernow.io
+            - alertmanager.monit.kernow.io
+            - gatus.monit.kernow.io
       containers:
         - name: mcp-server
           image: ghcr.io/charlieshreck/mcp-observability:latest
