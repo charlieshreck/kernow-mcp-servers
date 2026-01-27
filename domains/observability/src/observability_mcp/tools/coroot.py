@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 # Configuration
-COROOT_URL = os.environ.get("COROOT_URL", "http://10.30.0.20:32702")
+COROOT_URL = os.environ.get("COROOT_URL", "http://coroot.monit.kernow.io")
 COROOT_PROJECT_NAME = os.environ.get("COROOT_PROJECT", "all-clusters")
 
 # Cache for project name -> ID mapping

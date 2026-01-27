@@ -65,18 +65,18 @@ COROOT_URL=http://coroot.monitoring.svc:8080
 COROOT_PROJECT=default
 
 # VictoriaMetrics
-VICTORIA_METRICS_URL=http://10.30.0.20:30084
+VICTORIA_METRICS_URL=http://victoriametrics.monit.kernow.io
 
 # AlertManager
-ALERTMANAGER_URL=http://10.30.0.20:30083
+ALERTMANAGER_URL=http://alertmanager.monit.kernow.io
 
 # Grafana
-GRAFANA_URL=http://10.30.0.20:30081
+GRAFANA_URL=http://grafana.monit.kernow.io
 GRAFANA_USER=admin
 GRAFANA_PASSWORD=xxx
 
 # Gatus
-GATUS_URL=http://10.30.0.20:30086
+GATUS_URL=http://gatus.monit.kernow.io
 ```
 
 ## Development

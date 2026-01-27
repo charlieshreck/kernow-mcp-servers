@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 # Configuration
-ALERTMANAGER_URL = os.environ.get("ALERTMANAGER_URL", "http://10.30.0.20:30083")
+ALERTMANAGER_URL = os.environ.get("ALERTMANAGER_URL", "http://alertmanager.monit.kernow.io")
 
 
 class AlertsFilterInput(BaseModel):

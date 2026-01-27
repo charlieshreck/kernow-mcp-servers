@@ -11,7 +11,7 @@ from fastmcp import FastMCP
 logger = logging.getLogger(__name__)
 
 # Configuration
-GATUS_URL = os.environ.get("GATUS_URL", "http://10.30.0.20:30086")
+GATUS_URL = os.environ.get("GATUS_URL", "http://gatus.monit.kernow.io")
 
 
 async def _gatus_api(endpoint: str) -> Dict[str, Any]:

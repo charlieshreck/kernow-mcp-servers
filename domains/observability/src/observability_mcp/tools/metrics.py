@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 # Configuration
-VICTORIA_METRICS_URL = os.environ.get("VICTORIA_METRICS_URL", "http://10.30.0.20:30084")
+VICTORIA_METRICS_URL = os.environ.get("VICTORIA_METRICS_URL", "http://victoriametrics.monit.kernow.io")
 
 
 class QueryInput(BaseModel):

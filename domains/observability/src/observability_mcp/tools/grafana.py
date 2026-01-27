@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 # Configuration
-GRAFANA_URL = os.environ.get("GRAFANA_URL", "http://10.30.0.20:30081")
+GRAFANA_URL = os.environ.get("GRAFANA_URL", "http://grafana.monit.kernow.io")
 GRAFANA_USER = os.environ.get("GRAFANA_USER", "admin")
 GRAFANA_PASSWORD = os.environ.get("GRAFANA_PASSWORD", "")
 
