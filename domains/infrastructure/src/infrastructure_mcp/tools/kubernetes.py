@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 KUBECONFIGS = {
     "agentic": None,  # Uses in-cluster service account
     "prod": "/kubeconfigs/prod/kubeconfig",
+    "monit": "/kubeconfigs/monit/kubeconfig",
 }
 
 
@@ -66,10 +67,12 @@ def register_tools(mcp: FastMCP):
     async def kubectl_get_pods(
         namespace: str = "default",
         label_selector: Optional[str] = None,
-        all_namespaces: bool = False
+        all_namespaces: bool = False,
+        cluster: str = "agentic"
     ) -> List[dict]:
         """Get pods with status, readiness, and restart count.
-        Use all_namespaces=True to get pods across all namespaces."""
+        Use all_namespaces=True to get pods across all namespaces.
+        cluster: agentic (default), prod, or monit."""
         args = ["get", "pods", "-o", "json"]
         if all_namespaces:
             args.append("-A")
@@ -78,7 +81,7 @@ def register_tools(mcp: FastMCP):
         if label_selector:
             args.extend(["-l", label_selector])
 
-        stdout, stderr, rc = run_kubectl(args)
+        stdout, stderr, rc = run_kubectl(args, cluster=cluster)
         if rc != 0:
             return [{"error": stderr}]
 
@@ -122,16 +125,18 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     async def kubectl_get_deployments(
         namespace: str = "default",
-        all_namespaces: bool = False
+        all_namespaces: bool = False,
+        cluster: str = "agentic"
     ) -> List[dict]:
-        """Get deployments with replica status."""
+        """Get deployments with replica status.
+        cluster: agentic (default), prod, or monit."""
         args = ["get", "deployments", "-o", "json"]
         if all_namespaces:
             args.append("-A")
         else:
             args.extend(["-n", namespace])
 
-        stdout, stderr, rc = run_kubectl(args)
+        stdout, stderr, rc = run_kubectl(args, cluster=cluster)
         if rc != 0:
             return [{"error": stderr}]
 
@@ -170,16 +175,18 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     async def kubectl_get_services(
         namespace: str = "default",
-        all_namespaces: bool = False
+        all_namespaces: bool = False,
+        cluster: str = "agentic"
     ) -> List[dict]:
-        """Get services with type, cluster IP, and ports."""
+        """Get services with type, cluster IP, and ports.
+        cluster: agentic (default), prod, or monit."""
         args = ["get", "services", "-o", "json"]
         if all_namespaces:
             args.append("-A")
         else:
             args.extend(["-n", namespace])
 
-        stdout, stderr, rc = run_kubectl(args)
+        stdout, stderr, rc = run_kubectl(args, cluster=cluster)
         if rc != 0:
             return [{"error": stderr}]
 
@@ -199,16 +206,18 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     async def kubectl_get_statefulsets(
         namespace: str = "default",
-        all_namespaces: bool = False
+        all_namespaces: bool = False,
+        cluster: str = "agentic"
     ) -> List[dict]:
-        """Get statefulsets with replica status."""
+        """Get statefulsets with replica status.
+        cluster: agentic (default), prod, or monit."""
         args = ["get", "statefulsets", "-o", "json"]
         if all_namespaces:
             args.append("-A")
         else:
             args.extend(["-n", namespace])
 
-        stdout, stderr, rc = run_kubectl(args)
+        stdout, stderr, rc = run_kubectl(args, cluster=cluster)
         if rc != 0:
             return [{"error": stderr}]
 
@@ -233,16 +242,18 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     async def kubectl_get_daemonsets(
         namespace: str = "default",
-        all_namespaces: bool = False
+        all_namespaces: bool = False,
+        cluster: str = "agentic"
     ) -> List[dict]:
-        """Get daemonsets with scheduling status."""
+        """Get daemonsets with scheduling status.
+        cluster: agentic (default), prod, or monit."""
         args = ["get", "daemonsets", "-o", "json"]
         if all_namespaces:
             args.append("-A")
         else:
             args.extend(["-n", namespace])
 
-        stdout, stderr, rc = run_kubectl(args)
+        stdout, stderr, rc = run_kubectl(args, cluster=cluster)
         if rc != 0:
             return [{"error": stderr}]
 
@@ -354,16 +365,18 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     async def kubectl_get_pvcs(
         namespace: str = "default",
-        all_namespaces: bool = False
+        all_namespaces: bool = False,
+        cluster: str = "agentic"
     ) -> List[dict]:
-        """Get persistent volume claims with status and capacity."""
+        """Get persistent volume claims with status and capacity.
+        cluster: agentic (default), prod, or monit."""
         args = ["get", "pvc", "-o", "json"]
         if all_namespaces:
             args.append("-A")
         else:
             args.extend(["-n", namespace])
 
-        stdout, stderr, rc = run_kubectl(args)
+        stdout, stderr, rc = run_kubectl(args, cluster=cluster)
         if rc != 0:
             return [{"error": stderr}]
 
@@ -382,9 +395,10 @@ def register_tools(mcp: FastMCP):
     # =========================================================================
 
     @mcp.tool()
-    async def kubectl_get_nodes() -> List[dict]:
-        """Get all cluster nodes with status, version, and conditions."""
-        stdout, stderr, rc = run_kubectl(["get", "nodes", "-o", "json"])
+    async def kubectl_get_nodes(cluster: str = "agentic") -> List[dict]:
+        """Get all cluster nodes with status, version, and conditions.
+        cluster: agentic (default), prod, or monit."""
+        stdout, stderr, rc = run_kubectl(["get", "nodes", "-o", "json"], cluster=cluster)
         if rc != 0:
             return [{"error": stderr}]
 
@@ -406,9 +420,10 @@ def register_tools(mcp: FastMCP):
     # =========================================================================
 
     @mcp.tool()
-    async def kubectl_get_namespaces() -> List[dict]:
-        """Get all namespaces in the cluster."""
-        stdout, stderr, rc = run_kubectl(["get", "namespaces", "-o", "json"])
+    async def kubectl_get_namespaces(cluster: str = "agentic") -> List[dict]:
+        """Get all namespaces in the cluster.
+        cluster: agentic (default), prod, or monit."""
+        stdout, stderr, rc = run_kubectl(["get", "namespaces", "-o", "json"], cluster=cluster)
         if rc != 0:
             return [{"error": stderr}]
 
@@ -426,10 +441,12 @@ def register_tools(mcp: FastMCP):
     async def kubectl_get_events(
         namespace: str = "default",
         limit: int = 20,
-        warning_only: bool = False
+        warning_only: bool = False,
+        cluster: str = "agentic"
     ) -> List[dict]:
-        """Get Kubernetes events. Use warning_only=True to filter warnings."""
-        stdout, stderr, rc = run_kubectl(["get", "events", "-n", namespace, "-o", "json", "--sort-by=.lastTimestamp"])
+        """Get Kubernetes events. Use warning_only=True to filter warnings.
+        cluster: agentic (default), prod, or monit."""
+        stdout, stderr, rc = run_kubectl(["get", "events", "-n", namespace, "-o", "json", "--sort-by=.lastTimestamp"], cluster=cluster)
         if rc != 0:
             return [{"error": stderr}]
 
@@ -454,16 +471,18 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     async def kubectl_get_ingresses(
         namespace: str = "default",
-        all_namespaces: bool = False
+        all_namespaces: bool = False,
+        cluster: str = "agentic"
     ) -> List[dict]:
-        """Get ingresses with hosts and paths."""
+        """Get ingresses with hosts and paths.
+        cluster: agentic (default), prod, or monit."""
         args = ["get", "ingress", "-o", "json"]
         if all_namespaces:
             args.append("-A")
         else:
             args.extend(["-n", namespace])
 
-        stdout, stderr, rc = run_kubectl(args)
+        stdout, stderr, rc = run_kubectl(args, cluster=cluster)
         if rc != 0:
             return [{"error": stderr}]
 
@@ -528,16 +547,18 @@ def register_tools(mcp: FastMCP):
     # =========================================================================
 
     @mcp.tool()
-    async def kubectl_describe(resource_type: str, name: str, namespace: str = "default") -> str:
+    async def kubectl_describe(resource_type: str, name: str, namespace: str = "default", cluster: str = "agentic") -> str:
         """Get detailed description of a Kubernetes resource.
-        resource_type: pod, deployment, service, statefulset, etc."""
-        stdout, stderr, rc = run_kubectl(["describe", resource_type, name, "-n", namespace])
+        resource_type: pod, deployment, service, statefulset, etc.
+        cluster: agentic (default), prod, or monit."""
+        stdout, stderr, rc = run_kubectl(["describe", resource_type, name, "-n", namespace], cluster=cluster)
         return stdout[:5000] if rc == 0 else f"Error: {stderr}"
 
     @mcp.tool()
-    async def kubectl_get_yaml(resource_type: str, name: str, namespace: str = "default") -> str:
-        """Get YAML manifest of a Kubernetes resource."""
-        stdout, stderr, rc = run_kubectl(["get", resource_type, name, "-n", namespace, "-o", "yaml"])
+    async def kubectl_get_yaml(resource_type: str, name: str, namespace: str = "default", cluster: str = "agentic") -> str:
+        """Get YAML manifest of a Kubernetes resource.
+        cluster: agentic (default), prod, or monit."""
+        stdout, stderr, rc = run_kubectl(["get", resource_type, name, "-n", namespace, "-o", "yaml"], cluster=cluster)
         return stdout[:8000] if rc == 0 else f"Error: {stderr}"
 
     # =========================================================================

@@ -24,6 +24,10 @@ class ServiceInput(BaseModel):
     namespace: str = Field(default="ai-platform", description="Kubernetes namespace")
 
 
+class AppIdInput(BaseModel):
+    app_id: str = Field(description="Full Coroot application ID (format: cluster_id:namespace:Kind:name). Get IDs from coroot_get_infrastructure_overview.")
+
+
 class TimeRangeInput(BaseModel):
     hours: int = Field(default=24, description="Time range in hours")
     severity: Optional[str] = Field(default=None, description="Filter: critical, warning, info")
@@ -86,10 +90,11 @@ def register_tools(mcp: FastMCP):
     """Register Coroot tools with the MCP server."""
 
     @mcp.tool(name="coroot_get_service_metrics")
-    async def coroot_get_service_metrics(params: ServiceInput) -> str:
-        """Get metrics for a specific service (CPU, memory, latency, error rate)."""
+    async def coroot_get_service_metrics(params: AppIdInput) -> str:
+        """Get metrics for a specific service (CPU, memory, latency, error rate).
+        Use app_id from coroot_get_infrastructure_overview (format: cluster_id:namespace:Kind:name)."""
         try:
-            result = await _coroot_api(f"app/{params.namespace}:{params.service}")
+            result = await _coroot_api(f"app/{params.app_id}")
             return json.dumps(result, indent=2)
         except Exception as e:
             return _handle_error(e)
@@ -116,10 +121,11 @@ def register_tools(mcp: FastMCP):
             return _handle_error(e)
 
     @mcp.tool(name="coroot_get_service_dependencies")
-    async def coroot_get_service_dependencies(params: ServiceInput) -> str:
-        """Get upstream and downstream service dependencies."""
+    async def coroot_get_service_dependencies(params: AppIdInput) -> str:
+        """Get upstream and downstream service dependencies for a specific app.
+        Use app_id from coroot_get_infrastructure_overview (format: cluster_id:namespace:Kind:name)."""
         try:
-            result = await _coroot_api(f"app/{params.namespace}:{params.service}/map")
+            result = await _coroot_api(f"app/{params.app_id}")
             return json.dumps(result, indent=2)
         except Exception as e:
             return _handle_error(e)
@@ -174,5 +180,15 @@ def register_tools(mcp: FastMCP):
                 overview["services"][name] = {"health": status, "id": app_id}
 
             return json.dumps(overview, indent=2)
+        except Exception as e:
+            return _handle_error(e)
+
+    @mcp.tool(name="coroot_get_service_map")
+    async def coroot_get_service_map() -> str:
+        """Get global service dependency map showing all service connections across all clusters.
+        Returns nodes (services) and their upstream/downstream dependencies."""
+        try:
+            result = await _coroot_api("overview/map")
+            return json.dumps(result, indent=2)
         except Exception as e:
             return _handle_error(e)
