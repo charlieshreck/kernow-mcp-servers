@@ -8,6 +8,7 @@ data:
   # Kubernetes clusters
   KUBECONFIG_AGENTIC: "/kubeconfigs/agentic/kubeconfig"
   KUBECONFIG_PROD: "/kubeconfigs/prod/kubeconfig"
+  KUBECONFIG_MONIT: "/kubeconfigs/monit/kubeconfig"
   DEFAULT_CLUSTER: "agentic"
 
   # Proxmox
@@ -122,6 +123,9 @@ spec:
             - name: kubeconfig-prod
               mountPath: /kubeconfigs/prod
               readOnly: true
+            - name: kubeconfig-monit
+              mountPath: /kubeconfigs/monit
+              readOnly: true
           resources:
             requests:
               memory: "256Mi"
@@ -149,6 +153,9 @@ spec:
         - name: kubeconfig-prod
           secret:
             secretName: kubeconfig-prod
+        - name: kubeconfig-monit
+          secret:
+            secretName: kubeconfig-monit
 ---
 apiVersion: v1
 kind: Service
