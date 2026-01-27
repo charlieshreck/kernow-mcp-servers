@@ -23,6 +23,12 @@ spec:
         component: mcp
         domain: media
     spec:
+      volumes:
+        - name: plex-ssh-key
+          secret:
+            secretName: plex-mcp-ssh
+            defaultMode: 0444
+            optional: true
       containers:
         - name: media-mcp
           image: ghcr.io/charlieshreck/mcp-media:latest
@@ -46,6 +52,8 @@ spec:
                 secretKeyRef:
                   name: mcp-plex
                   key: PLEX_TOKEN
+            - name: PLEX_SSH_KEY_PATH
+              value: "/home/mcp/.ssh/SSH_PRIVATE_KEY"
             # Sonarr
             - name: SONARR_URL
               value: "https://sonarr.kernow.io"
@@ -107,6 +115,10 @@ spec:
                 secretKeyRef:
                   name: mcp-sabnzbd
                   key: API_KEY
+          volumeMounts:
+            - name: plex-ssh-key
+              mountPath: /home/mcp/.ssh
+              readOnly: true
           resources:
             requests:
               memory: "128Mi"

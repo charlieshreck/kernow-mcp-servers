@@ -3,6 +3,7 @@
 import os
 import logging
 import subprocess
+import tempfile
 from typing import Optional, Any
 
 import httpx
@@ -14,6 +15,32 @@ logger = logging.getLogger(__name__)
 PLEX_URL = os.environ.get("PLEX_URL", "http://10.10.0.50:32400")
 PLEX_TOKEN = os.environ.get("PLEX_TOKEN", "")
 PLEX_HOST = os.environ.get("PLEX_HOST", "10.10.0.50")
+PLEX_SSH_KEY_PATH = os.environ.get("PLEX_SSH_KEY_PATH", "")
+
+# Prepare SSH key at module load (fix Infisical trailing newline stripping)
+_ssh_key_file = None
+if PLEX_SSH_KEY_PATH and os.path.isfile(PLEX_SSH_KEY_PATH):
+    try:
+        with open(PLEX_SSH_KEY_PATH, "r") as f:
+            key_data = f.read()
+        if not key_data.endswith("\n"):
+            key_data += "\n"
+        fd, _ssh_key_file = tempfile.mkstemp(prefix="plex_ssh_")
+        with os.fdopen(fd, "w") as f:
+            f.write(key_data)
+        os.chmod(_ssh_key_file, 0o600)
+        logger.info("SSH key prepared for Plex GPU monitoring")
+    except Exception as e:
+        logger.warning(f"Failed to prepare SSH key: {e}")
+        _ssh_key_file = None
+
+
+def _ssh_base_cmd() -> list:
+    """Build base SSH command with optional key."""
+    cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=5"]
+    if _ssh_key_file:
+        cmd.extend(["-i", _ssh_key_file])
+    return cmd
 
 
 async def plex_request(endpoint: str, method: str = "GET") -> Any:
@@ -204,12 +231,12 @@ def register_tools(mcp: FastMCP):
     async def plex_get_gpu_status() -> dict:
         """Get GPU status from Plex VM via nvidia-smi."""
         try:
+            ssh_cmd = _ssh_base_cmd() + [
+                f"root@{PLEX_HOST}", "nvidia-smi",
+                "--query-gpu=name,driver_version,memory.used,memory.total,temperature.gpu,utilization.gpu,utilization.encoder,utilization.decoder",
+                "--format=csv,noheader,nounits"]
             result = subprocess.run(
-                ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=5",
-                 f"root@{PLEX_HOST}", "nvidia-smi",
-                 "--query-gpu=name,driver_version,memory.used,memory.total,temperature.gpu,utilization.gpu,utilization.encoder,utilization.decoder",
-                 "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=10
+                ssh_cmd, capture_output=True, text=True, timeout=10
             )
             if result.returncode == 0:
                 parts = [p.strip() for p in result.stdout.strip().split(",")]
@@ -234,12 +261,12 @@ def register_tools(mcp: FastMCP):
     async def plex_get_gpu_processes() -> list:
         """Get GPU processes (what's using the GPU)."""
         try:
+            ssh_cmd = _ssh_base_cmd() + [
+                f"root@{PLEX_HOST}", "nvidia-smi",
+                "--query-compute-apps=pid,name,used_memory",
+                "--format=csv,noheader,nounits"]
             result = subprocess.run(
-                ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=5",
-                 f"root@{PLEX_HOST}", "nvidia-smi",
-                 "--query-compute-apps=pid,name,used_memory",
-                 "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=10
+                ssh_cmd, capture_output=True, text=True, timeout=10
             )
             if result.returncode == 0:
                 lines = result.stdout.strip().split("\n")
