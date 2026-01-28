@@ -61,13 +61,22 @@ spec:
           envFrom:
             - configMapRef:
                 name: infrastructure-mcp-config
-            # Cloudflare - unique keys, use secretRef
-            - secretRef:
-                name: mcp-cloudflare
             # Infisical - unique keys, use secretRef
             - secretRef:
                 name: mcp-infisical
           env:
+            # Cloudflare - prefix keys to match code expectations
+            - name: CLOUDFLARE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-cloudflare
+                  key: API_TOKEN
+            - name: CLOUDFLARE_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-cloudflare
+                  key: ACCOUNT_ID
+                  optional: true
             # TrueNAS HDD - prefix keys to avoid conflicts
             - name: TRUENAS_HDD_API_KEY
               valueFrom:
