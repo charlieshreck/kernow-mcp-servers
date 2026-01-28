@@ -518,7 +518,7 @@ def register_tools(mcp: FastMCP):
 
     @mcp.tool()
     async def argocd_get_applications(namespace: str = "argocd") -> List[dict]:
-        """Get ArgoCD applications with sync status."""
+        """Get ArgoCD applications with sync status and destination info."""
         # ArgoCD runs in prod cluster, not agentic
         stdout, stderr, rc = run_kubectl(["get", "applications.argoproj.io", "-n", namespace, "-o", "json"], cluster="prod")
         if rc != 0:
@@ -531,7 +531,9 @@ def register_tools(mcp: FastMCP):
             "sync_status": a["status"].get("sync", {}).get("status"),
             "health": a["status"].get("health", {}).get("status"),
             "repo": a["spec"].get("source", {}).get("repoURL"),
-            "path": a["spec"].get("source", {}).get("path")
+            "path": a["spec"].get("source", {}).get("path"),
+            "destination_namespace": a["spec"].get("destination", {}).get("namespace"),
+            "destination_server": a["spec"].get("destination", {}).get("server")
         } for a in data.get("items", [])]
 
     @mcp.tool()
