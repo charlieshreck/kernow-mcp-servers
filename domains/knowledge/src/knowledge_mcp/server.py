@@ -75,7 +75,63 @@ async def ready(request):
 
 
 # =============================================================================
-# REST API Endpoints (used by fumadocs)
+# REST API Endpoints - Neo4j Graph
+# =============================================================================
+
+async def api_neo4j_query(request: Request):
+    """Execute read-only Cypher query."""
+    try:
+        cypher = request.query_params.get("q", "")
+        if not cypher:
+            return JSONResponse({"error": "Missing 'q' parameter"}, status_code=400)
+        result = await neo4j._query_graph_impl(cypher)
+        if "error" in result:
+            return JSONResponse(result, status_code=400)
+        return JSONResponse({"status": "ok", **result})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_neo4j_entity(request: Request):
+    """Get entity context with relationships."""
+    try:
+        entity_id = request.query_params.get("id", "")
+        entity_type = request.query_params.get("type", "Host")
+        if not entity_id:
+            return JSONResponse({"error": "Missing 'id' parameter"}, status_code=400)
+        result = await neo4j._get_entity_context_impl(entity_id, entity_type)
+        if not result.get("found"):
+            return JSONResponse(result, status_code=404)
+        return JSONResponse(result)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_neo4j_overview(request: Request):
+    """Infrastructure overview."""
+    try:
+        return JSONResponse(await neo4j._get_infrastructure_overview_impl())
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_neo4j_write(request: Request):
+    """Execute write Cypher query (for enrichment jobs)."""
+    try:
+        body = await request.json()
+        cypher = body.get("cypher", "")
+        if not cypher:
+            return JSONResponse({"error": "Missing 'cypher' in body"}, status_code=400)
+        result = await neo4j._neo4j_write(cypher)
+        if "error" in result:
+            return JSONResponse(result, status_code=400)
+        return JSONResponse(result)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# =============================================================================
+# REST API Endpoints - Qdrant Runbooks
 # =============================================================================
 
 async def api_list_runbooks(request: Request):
@@ -239,8 +295,15 @@ def main():
     rest_routes = [
         Route("/health", health, methods=["GET"]),
         Route("/ready", ready, methods=["GET"]),
+        # Neo4j graph API
+        Route("/api/neo4j/query", api_neo4j_query, methods=["GET"]),
+        Route("/api/neo4j/entity", api_neo4j_entity, methods=["GET"]),
+        Route("/api/neo4j/overview", api_neo4j_overview, methods=["GET"]),
+        Route("/api/neo4j/write", api_neo4j_write, methods=["POST"]),
+        # Qdrant runbooks API
         Route("/api/runbooks/{runbook_id}", api_get_runbook, methods=["GET"]),
         Route("/api/runbooks", api_list_runbooks, methods=["GET"]),
+        # Webhooks
         Route("/webhooks/outline", outline_webhook, methods=["POST"]),
         Route("/webhooks/silverbullet", silverbullet_webhook, methods=["POST", "GET"]),
         Route("/webhooks/reconcile", reconcile_webhook, methods=["POST", "GET"]),

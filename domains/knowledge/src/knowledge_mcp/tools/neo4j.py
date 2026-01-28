@@ -1,4 +1,7 @@
-"""Neo4j knowledge graph tools for relationship queries."""
+"""Neo4j knowledge graph tools for relationship queries.
+
+Provides both MCP tools and shared internal functions used by REST endpoints.
+"""
 
 import os
 import logging
@@ -13,6 +16,9 @@ logger = logging.getLogger(__name__)
 NEO4J_URL = os.environ.get("NEO4J_URL", "http://neo4j.ai-platform.svc:7474")
 NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "")
+
+# Write operations blocked in read-only queries
+_WRITE_KEYWORDS = ["CREATE", "MERGE", "DELETE", "SET", "REMOVE", "DROP"]
 
 
 async def neo4j_query(cypher: str, params: dict = None) -> Dict[str, Any]:
@@ -46,6 +52,17 @@ def parse_results(data: dict) -> List[dict]:
     return results
 
 
+def format_result_raw(data: dict) -> dict:
+    """Format Neo4j response preserving columns and raw row data."""
+    results = data.get("results", [])
+    if not results:
+        return {"columns": [], "data": []}
+    first = results[0]
+    columns = first.get("columns", [])
+    rows = [row.get("row", []) for row in first.get("data", [])]
+    return {"columns": columns, "data": rows}
+
+
 async def get_status() -> dict:
     """Get Neo4j status for health checks."""
     try:
@@ -55,6 +72,91 @@ async def get_status() -> dict:
         return {"status": "unhealthy", "error": str(e)}
 
 
+# =============================================================================
+# Shared internal functions (used by both MCP tools and REST endpoints)
+# =============================================================================
+
+async def _query_graph_impl(cypher: str) -> dict:
+    """Execute read-only Cypher query. Returns raw format with columns and data."""
+    cypher_upper = cypher.upper().strip()
+    if any(kw in cypher_upper for kw in _WRITE_KEYWORDS):
+        return {"error": "Only read-only queries allowed. Use MATCH, RETURN, WITH, etc."}
+    result = await neo4j_query(cypher)
+    if result.get("errors"):
+        return {"error": str(result["errors"])}
+    return format_result_raw(result)
+
+
+async def _get_entity_context_impl(entity_id: str, entity_type: str = "Host") -> dict:
+    """Get entity with all relationships, using coalesce for robust identification."""
+    cypher = f"""
+    MATCH (e:{entity_type})
+    WHERE e.ip = $id OR e.hostname = $id OR e.mac = $id
+       OR e.name = $id OR e.vmid = $id OR e.title = $id
+    WITH e LIMIT 1
+    OPTIONAL MATCH (e)-[r]->(related)
+    OPTIONAL MATCH (e)<-[r2]-(related2)
+    RETURN e,
+      collect(DISTINCT {{
+        type: type(r),
+        target: coalesce(related.name, related.ip, related.hostname, related.title, toString(related.vmid)),
+        target_type: labels(related)[0]
+      }}) as out,
+      collect(DISTINCT {{
+        type: type(r2),
+        source: coalesce(related2.name, related2.ip, related2.hostname, related2.title, toString(related2.vmid)),
+        source_type: labels(related2)[0]
+      }}) as inc
+    """
+    result = await neo4j_query(cypher, {"id": entity_id})
+    if result.get("errors") or not result.get("results", [{}])[0].get("data"):
+        return {"id": entity_id, "type": entity_type, "found": False}
+    data = result["results"][0]["data"][0]["row"]
+    props = data[0] or {}
+    out_rels = [r for r in data[1] if r.get("target")]
+    in_rels = [{"direction": "incoming", **r} for r in data[2] if r.get("source")]
+    return {
+        "id": entity_id,
+        "type": entity_type,
+        "found": True,
+        "properties": props,
+        "relationships": out_rels + in_rels,
+    }
+
+
+async def _get_infrastructure_overview_impl() -> dict:
+    """High-level infrastructure overview with entity counts and network summary."""
+    cypher = """
+    MATCH (n)
+    WITH labels(n)[0] as label, count(n) as count
+    RETURN collect({type: label, count: count}) as entities
+    """
+    result = await neo4j_query(cypher)
+    records = parse_results(result)
+
+    network_cypher = """
+    MATCH (n:Network)
+    OPTIONAL MATCH (h)-[:CONNECTED_TO]->(n)
+    RETURN n.name as network, n.cidr as cidr, count(h) as host_count
+    """
+    network_result = await neo4j_query(network_cypher)
+    networks = parse_results(network_result)
+
+    return {
+        "entities": records[0].get("entities", []) if records else [],
+        "networks": networks,
+    }
+
+
+async def _neo4j_write(cypher: str) -> dict:
+    """Execute a write Cypher query (for enrichment jobs)."""
+    result = await neo4j_query(cypher)
+    if result.get("errors"):
+        return {"error": str(result["errors"])}
+    stats = result.get("results", [{}])[0].get("stats", {})
+    return {"status": "ok", "stats": stats}
+
+
 def register_tools(mcp: FastMCP):
     """Register Neo4j tools with the MCP server."""
 
@@ -62,15 +164,10 @@ def register_tools(mcp: FastMCP):
     async def query_graph(cypher: str) -> List[dict]:
         """Execute read-only Cypher query. Examples: 'MATCH (h:Host) RETURN h.ip LIMIT 10'."""
         try:
-            # Basic safety check - only allow read operations
-            cypher_upper = cypher.upper().strip()
-            if any(kw in cypher_upper for kw in ["CREATE", "MERGE", "DELETE", "SET", "REMOVE", "DROP"]):
-                return [{"error": "Only read-only queries allowed. Use MATCH, RETURN, WITH, etc."}]
-
-            result = await neo4j_query(cypher)
-            if result.get("errors"):
-                return [{"error": str(result["errors"])}]
-            return parse_results(result)
+            result = await _query_graph_impl(cypher)
+            if "error" in result:
+                return [result]
+            return parse_results(await neo4j_query(cypher))
         except Exception as e:
             return [{"error": str(e)}]
 
@@ -78,18 +175,7 @@ def register_tools(mcp: FastMCP):
     async def get_entity_context(entity_id: str, entity_type: str = "Host") -> dict:
         """Get entity with relationships. entity_id: IP, hostname, MAC, or name."""
         try:
-            cypher = """
-            MATCH (n)
-            WHERE n.ip = $id OR n.hostname = $id OR n.mac = $id OR n.name = $id
-            OPTIONAL MATCH (n)-[r]-(m)
-            RETURN n, collect({rel: type(r), direction: CASE WHEN startNode(r) = n THEN 'OUT' ELSE 'IN' END, node: m}) as relationships
-            LIMIT 1
-            """
-            result = await neo4j_query(cypher, {"id": entity_id})
-            records = parse_results(result)
-            if records:
-                return records[0]
-            return {"error": "Entity not found"}
+            return await _get_entity_context_impl(entity_id, entity_type)
         except Exception as e:
             return {"error": str(e)}
 
@@ -184,27 +270,7 @@ def register_tools(mcp: FastMCP):
     async def get_infrastructure_overview() -> dict:
         """High-level infrastructure overview."""
         try:
-            cypher = """
-            MATCH (n)
-            WITH labels(n)[0] as label, count(n) as count
-            RETURN collect({type: label, count: count}) as entities
-            """
-            result = await neo4j_query(cypher)
-            records = parse_results(result)
-
-            # Get network summary
-            network_cypher = """
-            MATCH (n:Network)
-            OPTIONAL MATCH (h)-[:CONNECTED_TO]->(n)
-            RETURN n.name as network, n.cidr as cidr, count(h) as host_count
-            """
-            network_result = await neo4j_query(network_cypher)
-            networks = parse_results(network_result)
-
-            return {
-                "entities": records[0].get("entities", []) if records else [],
-                "networks": networks
-            }
+            return await _get_infrastructure_overview_impl()
         except Exception as e:
             return {"error": str(e)}
 
