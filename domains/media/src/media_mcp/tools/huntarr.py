@@ -40,7 +40,7 @@ def register_tools(mcp: FastMCP):
     async def huntarr_get_status() -> dict:
         """Get Huntarr system status including version and uptime."""
         try:
-            return await huntarr_request("api/status")
+            return await huntarr_request("api/health")
         except Exception as e:
             return {"error": str(e)}
 
@@ -54,9 +54,8 @@ def register_tools(mcp: FastMCP):
         if app not in HUNTARR_APPS:
             return {"error": f"Invalid app. Must be one of: {HUNTARR_APPS}"}
         try:
-            return await huntarr_request(f"api/{app}/settings")
-        except Exception as e:
-            return {"error": str(e)}
+            all_settings = await huntarr_request("api/settings")
+            return all_settings.get(app, {"error": f"No settings found for {app}"})
 
     @mcp.tool()
     async def huntarr_update_settings(app: str, settings: dict) -> dict:
