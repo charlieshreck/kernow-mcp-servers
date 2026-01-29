@@ -16,7 +16,7 @@ data:
 
   # TrueNAS
   TRUENAS_HDD_URL: "https://10.10.0.50"
-  TRUENAS_MEDIA_URL: "https://10.10.0.60"
+  TRUENAS_MEDIA_URL: "https://10.20.0.114"
 
   # Cloudflare
   CLOUDFLARE_API_BASE: "https://api.cloudflare.com/client/v4"
