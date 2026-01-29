@@ -66,12 +66,12 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: mcp-adguard
-                  key: username
+                  key: USERNAME
             - name: ADGUARD_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: mcp-adguard
-                  key: password
+                  key: PASSWORD
             # Tasmota
             - name: TASMOTA_DEVICES_FILE
               value: "/data/tasmota-devices.json"
