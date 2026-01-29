@@ -11,7 +11,10 @@ from starlette.routing import Route, Mount
 from starlette.responses import JSONResponse
 import uvicorn
 
-from media_mcp.tools import plex, sonarr, radarr, prowlarr, overseerr, tautulli, transmission, sabnzbd
+from media_mcp.tools import (
+    plex, sonarr, radarr, prowlarr, overseerr, tautulli, transmission, sabnzbd,
+    huntarr, cleanuparr, maintainerr, notifiarr, recommendarr
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,6 +35,11 @@ mcp = FastMCP(
     - tautulli_* : Plex statistics
     - transmission_* : Torrent downloads
     - sabnzbd_* : Usenet downloads
+    - huntarr_* : Missing media discovery
+    - cleanuparr_* : Download queue cleanup
+    - maintainerr_* : Plex media maintenance
+    - notifiarr_* : Notification client
+    - recommendarr_* : AI-powered recommendations
     """,
     stateless_http=True
 )
@@ -45,6 +53,11 @@ overseerr.register_tools(mcp)
 tautulli.register_tools(mcp)
 transmission.register_tools(mcp)
 sabnzbd.register_tools(mcp)
+huntarr.register_tools(mcp)
+cleanuparr.register_tools(mcp)
+maintainerr.register_tools(mcp)
+notifiarr.register_tools(mcp)
+recommendarr.register_tools(mcp)
 
 
 # Health check components
@@ -107,6 +120,41 @@ async def check_components() -> dict:
         components["sabnzbd"] = "error" not in queue
     except:
         components["sabnzbd"] = False
+
+    # Huntarr
+    try:
+        status = await huntarr.get_status()
+        components["huntarr"] = "error" not in status
+    except:
+        components["huntarr"] = False
+
+    # Cleanuparr
+    try:
+        status = await cleanuparr.get_status()
+        components["cleanuparr"] = "error" not in status
+    except:
+        components["cleanuparr"] = False
+
+    # Maintainerr
+    try:
+        status = await maintainerr.get_status()
+        components["maintainerr"] = "error" not in status
+    except:
+        components["maintainerr"] = False
+
+    # Notifiarr
+    try:
+        status = await notifiarr.get_status()
+        components["notifiarr"] = "error" not in status
+    except:
+        components["notifiarr"] = False
+
+    # Recommendarr
+    try:
+        status = await recommendarr.get_status()
+        components["recommendarr"] = "error" not in status
+    except:
+        components["recommendarr"] = False
 
     return components
 

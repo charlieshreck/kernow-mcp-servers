@@ -115,6 +115,21 @@ spec:
                 secretKeyRef:
                   name: mcp-sabnzbd
                   key: API_KEY
+            # Huntarr (no API key required - internal API)
+            - name: HUNTARR_URL
+              value: "https://huntarr.kernow.io"
+            # Cleanuparr (no API key required - internal API)
+            - name: CLEANUPARR_URL
+              value: "https://cleanuparr.kernow.io"
+            # Maintainerr (no API key required - internal API)
+            - name: MAINTAINERR_URL
+              value: "https://maintainerr.kernow.io"
+            # Notifiarr (no API key required for local client API)
+            - name: NOTIFIARR_URL
+              value: "https://notifiarr.kernow.io"
+            # Recommendarr (no API key required - internal API)
+            - name: RECOMMENDARR_URL
+              value: "https://recomendarr.kernow.io"
           volumeMounts:
             - name: plex-ssh-key
               mountPath: /home/mcp/.ssh
