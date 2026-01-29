@@ -56,6 +56,8 @@ def register_tools(mcp: FastMCP):
         try:
             all_settings = await huntarr_request("api/settings")
             return all_settings.get(app, {"error": f"No settings found for {app}"})
+        except Exception as e:
+            return {"error": str(e)}
 
     @mcp.tool()
     async def huntarr_update_settings(app: str, settings: dict) -> dict:
