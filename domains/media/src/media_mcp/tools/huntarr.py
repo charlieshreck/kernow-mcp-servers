@@ -28,7 +28,7 @@ async def huntarr_request(endpoint: str, method: str = "GET", data: dict = None)
 async def get_status() -> dict:
     """Get Huntarr status for health checks."""
     try:
-        return await huntarr_request("api/status")
+        return await huntarr_request("api/health")
     except Exception as e:
         return {"error": str(e)}
 

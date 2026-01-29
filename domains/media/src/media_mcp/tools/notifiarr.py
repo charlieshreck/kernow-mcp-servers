@@ -24,7 +24,11 @@ async def notifiarr_request(endpoint: str, method: str = "GET", data: dict = Non
 async def get_status() -> dict:
     """Get Notifiarr status for health checks."""
     try:
-        return await notifiarr_request("api/version")
+        # Notifiarr Client doesn't expose a JSON API - just check HTTP connectivity
+        async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+            response = await client.get(NOTIFIARR_URL)
+            response.raise_for_status()
+            return {"status": "ok", "message": "Notifiarr Client UI is responding"}
     except Exception as e:
         return {"error": str(e)}
 

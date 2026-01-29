@@ -25,7 +25,12 @@ async def maintainerr_request(endpoint: str, method: str = "GET", data: dict = N
 async def get_status() -> dict:
     """Get Maintainerr status for health checks."""
     try:
-        return await maintainerr_request("settings/version")
+        # Version endpoint returns plain text, not JSON
+        async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+            url = f"{MAINTAINERR_URL}/api/settings/version"
+            response = await client.get(url)
+            response.raise_for_status()
+            return {"version": response.text.strip(), "status": "ok"}
     except Exception as e:
         return {"error": str(e)}
 
