@@ -1506,3 +1506,297 @@ def register_tools(mcp: FastMCP):
         except Exception as e:
             logger.error(f"link_runbook_to_problem failed: {e}")
             return {"error": str(e)}
+
+    # =========================================================================
+    # Project 05: Skills Collection Tools
+    # Semantic skill discovery, slash command routing, skill management
+    # =========================================================================
+
+    @mcp.tool()
+    async def search_skills(
+        query: str,
+        limit: int = 5,
+        min_score: float = 0.6,
+        domain: Optional[str] = None
+    ) -> List[dict]:
+        """Search skills by semantic similarity to user intent.
+
+        Use this for routing user requests to the appropriate skill when
+        no explicit slash command is provided.
+
+        Args:
+            query: User intent or request description
+            limit: Max results to return
+            min_score: Minimum similarity score (0.0-1.0)
+            domain: Optional domain filter (infrastructure, observability, etc.)
+
+        Returns:
+            List of matching skills with scores and metadata
+        """
+        try:
+            embedding = await get_embedding(query)
+
+            filter_conditions = []
+            if domain:
+                filter_conditions.append({"key": "domain", "match": {"value": domain}})
+
+            body = {
+                "vector": embedding,
+                "limit": limit,
+                "with_payload": True,
+                "score_threshold": min_score
+            }
+            if filter_conditions:
+                body["filter"] = {"must": filter_conditions}
+
+            result = await qdrant_request("/collections/skills/points/search", "POST", body)
+
+            return [{
+                "id": r.get("id"),
+                "score": r.get("score"),
+                "name": r.get("payload", {}).get("name"),
+                "domain": r.get("payload", {}).get("domain"),
+                "commands": r.get("payload", {}).get("commands", []),
+                "mcps_primary": r.get("payload", {}).get("mcps_primary", []),
+                "mcps_secondary": r.get("payload", {}).get("mcps_secondary", []),
+                "description": r.get("payload", {}).get("description", "")[:200]
+            } for r in result.get("result", [])]
+        except Exception as e:
+            logger.error(f"search_skills failed: {e}")
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    async def get_skill(skill_id: str) -> dict:
+        """Get a skill by its ID.
+
+        Args:
+            skill_id: The skill's unique identifier (e.g., "infrastructure-skill")
+
+        Returns:
+            Full skill definition including MCPs, commands, runbook patterns
+        """
+        try:
+            result = await qdrant_request(f"/collections/skills/points/{skill_id}")
+            payload = result.get("result", {}).get("payload", {})
+            if not payload:
+                return {"error": f"Skill not found: {skill_id}"}
+            return payload
+        except Exception as e:
+            logger.error(f"get_skill failed: {e}")
+            return {"error": str(e)}
+
+    @mcp.tool()
+    async def get_skill_by_command(command: str) -> dict:
+        """Get a skill by its slash command.
+
+        Args:
+            command: Slash command (e.g., "/troubleshoot", "/deploy")
+
+        Returns:
+            Skill definition if found, error otherwise
+        """
+        try:
+            # Normalize command
+            if not command.startswith("/"):
+                command = f"/{command}"
+
+            result = await qdrant_request("/collections/skills/points/scroll", "POST", {
+                "limit": 1,
+                "with_payload": True,
+                "filter": {
+                    "must": [{
+                        "key": "commands",
+                        "match": {"any": [command]}
+                    }]
+                }
+            })
+
+            points = result.get("result", {}).get("points", [])
+            if points:
+                return points[0].get("payload", {})
+            return {"error": f"No skill found for command: {command}"}
+        except Exception as e:
+            logger.error(f"get_skill_by_command failed: {e}")
+            return {"error": str(e)}
+
+    @mcp.tool()
+    async def add_skill(
+        skill_id: str,
+        name: str,
+        domain: str,
+        description: str,
+        commands: List[str],
+        mcps_primary: List[str],
+        mcps_secondary: Optional[List[str]] = None,
+        runbook_patterns: Optional[List[str]] = None,
+        priority_keywords: Optional[List[str]] = None,
+        system_prompt_ref: Optional[str] = None,
+        version: str = "1.0.0"
+    ) -> dict:
+        """Add a new skill to the skills collection.
+
+        Args:
+            skill_id: Unique skill identifier (e.g., "infrastructure-skill")
+            name: Human-readable name
+            domain: Domain classification (infrastructure, observability, etc.)
+            description: What this skill handles
+            commands: List of slash commands (e.g., ["/troubleshoot", "/deploy"])
+            mcps_primary: Always-loaded MCP servers
+            mcps_secondary: Optionally-loaded MCP servers
+            runbook_patterns: Glob patterns for runbook filtering
+            priority_keywords: Keywords that boost runbook relevance
+            system_prompt_ref: Path to system prompt file
+            version: Semantic version
+
+        Returns:
+            Success status and skill ID
+        """
+        try:
+            # Create embedding from name + description + commands
+            embed_text = f"{name}\n{description}\nCommands: {', '.join(commands)}"
+            embedding = await get_embedding(embed_text)
+
+            await qdrant_request("/collections/skills/points", "PUT", {
+                "points": [{
+                    "id": skill_id,
+                    "vector": embedding,
+                    "payload": {
+                        "id": skill_id,
+                        "name": name,
+                        "domain": domain,
+                        "description": description,
+                        "commands": commands,
+                        "mcps_primary": mcps_primary,
+                        "mcps_secondary": mcps_secondary or [],
+                        "runbook_patterns": runbook_patterns or [],
+                        "priority_keywords": priority_keywords or [],
+                        "system_prompt_ref": system_prompt_ref,
+                        "version": version,
+                        "success_count": 0,
+                        "failure_count": 0,
+                        "total_executions": 0,
+                        "created_at": datetime.utcnow().isoformat(),
+                        "updated_at": datetime.utcnow().isoformat()
+                    }
+                }]
+            })
+
+            logger.info(f"Added skill: {skill_id}")
+            return {"success": True, "skill_id": skill_id}
+        except Exception as e:
+            logger.error(f"add_skill failed: {e}")
+            return {"error": str(e)}
+
+    @mcp.tool()
+    async def update_skill(
+        skill_id: str,
+        success_count: Optional[int] = None,
+        failure_count: Optional[int] = None,
+        total_executions: Optional[int] = None,
+        version: Optional[str] = None
+    ) -> dict:
+        """Update skill metadata (execution stats, version).
+
+        Args:
+            skill_id: The skill's ID
+            success_count: New success count
+            failure_count: New failure count
+            total_executions: New total execution count
+            version: New version string
+
+        Returns:
+            Success status and updated fields
+        """
+        try:
+            updates = {"updated_at": datetime.utcnow().isoformat()}
+            if success_count is not None:
+                updates["success_count"] = success_count
+            if failure_count is not None:
+                updates["failure_count"] = failure_count
+            if total_executions is not None:
+                updates["total_executions"] = total_executions
+            if version is not None:
+                updates["version"] = version
+
+            await qdrant_request(f"/collections/skills/points/{skill_id}", "PUT", {
+                "payload": updates
+            })
+
+            logger.info(f"Updated skill {skill_id}: {list(updates.keys())}")
+            return {"success": True, "updated": list(updates.keys())}
+        except Exception as e:
+            logger.error(f"update_skill failed: {e}")
+            return {"error": str(e)}
+
+    @mcp.tool()
+    async def list_skills(domain: Optional[str] = None) -> List[dict]:
+        """List all registered skills.
+
+        Args:
+            domain: Optional domain filter
+
+        Returns:
+            List of skills with basic metadata
+        """
+        try:
+            body = {"limit": 100, "with_payload": True}
+            if domain:
+                body["filter"] = {"must": [{"key": "domain", "match": {"value": domain}}]}
+
+            result = await qdrant_request("/collections/skills/points/scroll", "POST", body)
+
+            return [{
+                "id": p.get("payload", {}).get("id"),
+                "name": p.get("payload", {}).get("name"),
+                "domain": p.get("payload", {}).get("domain"),
+                "commands": p.get("payload", {}).get("commands", []),
+                "version": p.get("payload", {}).get("version"),
+                "total_executions": p.get("payload", {}).get("total_executions", 0)
+            } for p in result.get("result", {}).get("points", [])]
+        except Exception as e:
+            logger.error(f"list_skills failed: {e}")
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    async def record_skill_execution(skill_id: str, success: bool) -> dict:
+        """Record a skill execution for learning metrics.
+
+        Args:
+            skill_id: The skill's ID
+            success: Whether the execution was successful
+
+        Returns:
+            Updated execution stats
+        """
+        try:
+            # Get current stats
+            result = await qdrant_request(f"/collections/skills/points/{skill_id}")
+            payload = result.get("result", {}).get("payload", {})
+
+            total = payload.get("total_executions", 0) + 1
+            success_count = payload.get("success_count", 0) + (1 if success else 0)
+            failure_count = payload.get("failure_count", 0) + (0 if success else 1)
+
+            updates = {
+                "total_executions": total,
+                "success_count": success_count,
+                "failure_count": failure_count,
+                "success_rate": success_count / total if total > 0 else 0,
+                "last_execution": datetime.utcnow().isoformat(),
+                "updated_at": datetime.utcnow().isoformat()
+            }
+
+            await qdrant_request(f"/collections/skills/points/{skill_id}", "PUT", {
+                "payload": updates
+            })
+
+            logger.info(f"Recorded skill execution: {skill_id}, success={success}")
+            return {
+                "success": True,
+                "skill_id": skill_id,
+                "total_executions": total,
+                "success_rate": updates["success_rate"]
+            }
+        except Exception as e:
+            logger.error(f"record_skill_execution failed: {e}")
+            return {"error": str(e)}
