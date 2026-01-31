@@ -11,8 +11,9 @@ data:
   KUBECONFIG_MONIT: "/kubeconfigs/monit/kubeconfig"
   DEFAULT_CLUSTER: "agentic"
 
-  # Proxmox
-  PROXMOX_URL: "https://10.10.0.10:8006"
+  # Proxmox (multi-host)
+  PROXMOX_RUAPEHU_URL: "https://10.10.0.10:8006"
+  PROXMOX_CARRICK_URL: "https://10.30.0.10:8006"
 
   # TrueNAS
   TRUENAS_HDD_URL: "https://10.20.0.103"
@@ -91,18 +92,28 @@ spec:
                   name: mcp-truenas-media
                   key: API_KEY
                   optional: true
-            # Proxmox - prefix keys
-            - name: PROXMOX_TOKEN_ID
+            # Proxmox Ruapehu (prod)
+            - name: PROXMOX_RUAPEHU_TOKEN_ID
               valueFrom:
                 secretKeyRef:
-                  name: mcp-proxmox
+                  name: mcp-proxmox-ruapehu
                   key: TOKEN_ID
-            - name: PROXMOX_TOKEN_SECRET
+            - name: PROXMOX_RUAPEHU_TOKEN_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: mcp-proxmox
+                  name: mcp-proxmox-ruapehu
                   key: TOKEN_SECRET
-                  optional: true
+            # Proxmox Carrick (monit)
+            - name: PROXMOX_CARRICK_TOKEN_ID
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-proxmox-carrick
+                  key: TOKEN_ID
+            - name: PROXMOX_CARRICK_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-proxmox-carrick
+                  key: TOKEN_SECRET
             # OPNsense - prefix keys
             - name: OPNSENSE_API_KEY
               valueFrom:
