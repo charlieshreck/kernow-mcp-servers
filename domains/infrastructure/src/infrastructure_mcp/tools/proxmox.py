@@ -27,11 +27,17 @@ PROXMOX_HOSTS = {
         "token_secret": os.environ.get("PROXMOX_RUAPEHU_TOKEN_SECRET", ""),
         "description": "Production cluster (10.10.0.0/24)",
     },
-    "carrick": {
-        "url": os.environ.get("PROXMOX_CARRICK_URL", "https://10.30.0.10:8006"),
-        "token_id": os.environ.get("PROXMOX_CARRICK_TOKEN_ID", ""),
-        "token_secret": os.environ.get("PROXMOX_CARRICK_TOKEN_SECRET", ""),
-        "description": "Monitoring cluster (10.30.0.0/24)",
+    "pihanga": {
+        "url": os.environ.get("PROXMOX_PIHANGA_URL", "https://10.10.0.20:8006"),
+        "token_id": os.environ.get("PROXMOX_PIHANGA_TOKEN_ID", ""),
+        "token_secret": os.environ.get("PROXMOX_PIHANGA_TOKEN_SECRET", ""),
+        "description": "Monitoring + Backup cluster (Ryzen 5 7640HS, 28GB)",
+    },
+    "hikurangi": {
+        "url": os.environ.get("PROXMOX_HIKURANGI_URL", "https://10.30.0.10:8006"),
+        "token_id": os.environ.get("PROXMOX_HIKURANGI_TOKEN_ID", ""),
+        "token_secret": os.environ.get("PROXMOX_HIKURANGI_TOKEN_SECRET", ""),
+        "description": "IaC + Test VMs (N150, 12GB) - formerly Carrick",
     },
 }
 
@@ -43,7 +49,7 @@ if os.environ.get("PROXMOX_TOKEN_ID") and not PROXMOX_HOSTS["ruapehu"]["token_id
 
 DEFAULT_HOST = "ruapehu"
 
-ProxmoxHost = Literal["ruapehu", "carrick", "all"]
+ProxmoxHost = Literal["ruapehu", "pihanga", "hikurangi", "all"]
 
 
 def get_host_config(host: str) -> dict:

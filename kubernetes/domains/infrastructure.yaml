@@ -13,7 +13,8 @@ data:
 
   # Proxmox (multi-host)
   PROXMOX_RUAPEHU_URL: "https://10.10.0.10:8006"
-  PROXMOX_CARRICK_URL: "https://10.30.0.10:8006"
+  PROXMOX_PIHANGA_URL: "https://10.10.0.20:8006"
+  PROXMOX_HIKURANGI_URL: "https://10.30.0.10:8006"
 
   # TrueNAS
   TRUENAS_HDD_URL: "https://10.20.0.103"
@@ -103,17 +104,30 @@ spec:
                 secretKeyRef:
                   name: mcp-proxmox-ruapehu
                   key: TOKEN_SECRET
-            # Proxmox Carrick (monit)
-            - name: PROXMOX_CARRICK_TOKEN_ID
+            # Proxmox Pihanga (monit + backup)
+            - name: PROXMOX_PIHANGA_TOKEN_ID
               valueFrom:
                 secretKeyRef:
-                  name: mcp-proxmox-carrick
+                  name: mcp-proxmox-pihanga
                   key: TOKEN_ID
-            - name: PROXMOX_CARRICK_TOKEN_SECRET
+            - name: PROXMOX_PIHANGA_TOKEN_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: mcp-proxmox-carrick
+                  name: mcp-proxmox-pihanga
                   key: TOKEN_SECRET
+            # Proxmox Hikurangi (iac + test) - formerly Carrick
+            - name: PROXMOX_HIKURANGI_TOKEN_ID
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-proxmox-hikurangi
+                  key: TOKEN_ID
+                  optional: true
+            - name: PROXMOX_HIKURANGI_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-proxmox-hikurangi
+                  key: TOKEN_SECRET
+                  optional: true
             # OPNsense - prefix keys
             - name: OPNSENSE_API_KEY
               valueFrom:
