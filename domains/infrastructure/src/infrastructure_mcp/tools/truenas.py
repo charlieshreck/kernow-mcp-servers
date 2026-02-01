@@ -32,7 +32,7 @@ class ResponseFormat(str, Enum):
     json = "json"
 
 
-async def truenas_api(instance: str, endpoint: str) -> dict:
+async def truenas_api(instance: str, endpoint: str, method: str = "GET", data: dict = None) -> dict:
     """Make authenticated API call to TrueNAS."""
     config = TRUENAS_INSTANCES.get(instance)
     if not config:
@@ -42,7 +42,16 @@ async def truenas_api(instance: str, endpoint: str) -> dict:
     url = f"{config['url']}/api/v2.0{endpoint}"
 
     async with httpx.AsyncClient(verify=False, timeout=30.0) as client:
-        resp = await client.get(url, headers=headers)
+        if method == "GET":
+            resp = await client.get(url, headers=headers)
+        elif method == "POST":
+            resp = await client.post(url, headers=headers, json=data)
+        elif method == "PUT":
+            resp = await client.put(url, headers=headers, json=data)
+        elif method == "DELETE":
+            resp = await client.delete(url, headers=headers)
+        else:
+            raise ValueError(f"Unsupported method: {method}")
         resp.raise_for_status()
         return resp.json()
 
@@ -238,3 +247,49 @@ def register_tools(mcp: FastMCP):
         output.append(f"- Utilization: {(total_used / total_size * 100) if total_size > 0 else 0:.1f}%")
 
         return "\n".join(output)
+
+    class CreateDatasetInput(BaseModel):
+        instance: str = Field(default="hdd", description="TrueNAS instance: 'hdd' or 'media'")
+        name: str = Field(..., description="Full dataset path (e.g., 'Tekapo/victoria-metrics')")
+        comments: Optional[str] = Field(default=None, description="Optional dataset comment")
+
+    @mcp.tool()
+    async def truenas_create_dataset(params: CreateDatasetInput) -> str:
+        """Create a new ZFS dataset under an existing pool/dataset."""
+        data = {
+            "name": params.name,
+            "type": "FILESYSTEM",
+            "compression": "LZ4",
+            "atime": "OFF",
+            "acltype": "POSIX",
+            "aclmode": "DISCARD",
+        }
+        if params.comments:
+            data["comments"] = params.comments
+
+        result = await truenas_api(params.instance, "/pool/dataset", method="POST", data=data)
+        return f"Created dataset: {result.get('name', params.name)} at {result.get('mountpoint', 'unknown')}"
+
+    class CreateNFSShareInput(BaseModel):
+        instance: str = Field(default="hdd", description="TrueNAS instance: 'hdd' or 'media'")
+        path: str = Field(..., description="Full path to share (e.g., '/mnt/Tekapo/victoria-metrics')")
+        networks: List[str] = Field(default_factory=list, description="Allowed networks (e.g., ['10.10.0.0/24'])")
+        comment: Optional[str] = Field(default=None, description="Optional share comment")
+        maproot_user: str = Field(default="root", description="Map root to this user")
+        maproot_group: str = Field(default="wheel", description="Map root to this group")
+
+    @mcp.tool()
+    async def truenas_create_nfs_share(params: CreateNFSShareInput) -> str:
+        """Create an NFS share for a dataset path."""
+        data = {
+            "path": params.path,
+            "networks": params.networks,
+            "maproot_user": params.maproot_user,
+            "maproot_group": params.maproot_group,
+            "enabled": True,
+        }
+        if params.comment:
+            data["comment"] = params.comment
+
+        result = await truenas_api(params.instance, "/sharing/nfs", method="POST", data=data)
+        return f"Created NFS share: {result.get('path')} (ID: {result.get('id')})"
