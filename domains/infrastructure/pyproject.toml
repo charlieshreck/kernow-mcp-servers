@@ -21,3 +21,4 @@ infrastructure-mcp = "infrastructure_mcp.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/infrastructure_mcp"]
+
