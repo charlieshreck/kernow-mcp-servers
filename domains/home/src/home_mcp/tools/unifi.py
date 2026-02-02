@@ -119,11 +119,23 @@ def register_tools(mcp: FastMCP):
                 name = c.get("name") or c.get("hostname") or c.get("mac")
                 if search and search.lower() not in str(name).lower() and search not in c.get("ip", ""):
                     continue
+                channel = c.get("channel")
+                if channel:
+                    if channel <= 14:
+                        radio = "2.4GHz"
+                    elif channel <= 177:
+                        radio = "5GHz"
+                    else:
+                        radio = "6GHz"
+                else:
+                    radio = None
                 result.append({
                     "name": name,
                     "mac": c.get("mac"),
                     "ip": c.get("ip"),
                     "signal": c.get("signal"),
+                    "channel": channel,
+                    "radio": radio,
                     "rx_bytes": c.get("rx_bytes"),
                     "tx_bytes": c.get("tx_bytes"),
                     "essid": c.get("essid"),
