@@ -64,7 +64,7 @@ SESSION = UniFiSession()
 
 
 async def unifi_api(endpoint: str, method: str = "GET", data: dict = None,
-                    require_session: bool = False) -> Any:
+                    require_session: bool = True) -> Any:
     """Make request to UniFi API."""
     async with httpx.AsyncClient(verify=SSL_CONTEXT, timeout=30.0) as client:
         headers = {}
@@ -72,7 +72,7 @@ async def unifi_api(endpoint: str, method: str = "GET", data: dict = None,
 
         if UNIFI_API_KEY:
             headers["X-API-KEY"] = UNIFI_API_KEY
-        elif require_session:
+        elif require_session and UNIFI_USER and UNIFI_PASSWORD:
             if await SESSION.ensure_session():
                 cookies = SESSION.cookies
                 if SESSION.csrf_token:
