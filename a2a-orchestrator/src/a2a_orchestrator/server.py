@@ -3,13 +3,17 @@
 import os
 import logging
 import asyncio
-from typing import Optional
 from datetime import datetime
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI
 
+from a2a_orchestrator.models import (
+    Alert,
+    Finding,
+    InvestigateRequest,
+    InvestigateResponse,
+)
 from a2a_orchestrator.specialists import (
     devops_investigate,
     network_investigate,
@@ -28,55 +32,6 @@ app = FastAPI(
     description="Parallel specialist agents for alert triage",
     version="1.0.0"
 )
-
-
-# =============================================================================
-# Request/Response Models
-# =============================================================================
-
-class AlertLabels(BaseModel):
-    namespace: Optional[str] = None
-    pod: Optional[str] = None
-    service: Optional[str] = None
-    node: Optional[str] = None
-    # Allow any additional labels
-    class Config:
-        extra = "allow"
-
-
-class Alert(BaseModel):
-    name: str
-    labels: AlertLabels = AlertLabels()
-    severity: str = "warning"
-    description: Optional[str] = None
-    fingerprint: Optional[str] = None
-
-
-class InvestigateRequest(BaseModel):
-    request_id: str
-    alert: Alert
-    context: dict = {}
-
-
-class Finding(BaseModel):
-    agent: str
-    status: str  # PASS, WARN, FAIL, ERROR
-    issue: Optional[str] = None
-    evidence: Optional[str] = None
-    recommendation: Optional[str] = None
-    tools_used: list[str] = []
-    latency_ms: int = 0
-
-
-class InvestigateResponse(BaseModel):
-    request_id: str
-    verdict: str  # ACTIONABLE, UNKNOWN, FALSE_POSITIVE
-    confidence: float
-    findings: list[Finding]
-    synthesis: str
-    suggested_action: Optional[str] = None
-    fallback_used: bool = False
-    latency_ms: int = 0
 
 
 # =============================================================================
