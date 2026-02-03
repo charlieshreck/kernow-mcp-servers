@@ -1,4 +1,5 @@
 # A2A Orchestrator - Parallel specialist agents for alert triage
+# Build: v2 - Pydantic model fix
 FROM python:3.11-slim
 
 WORKDIR /app
