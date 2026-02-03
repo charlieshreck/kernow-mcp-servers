@@ -75,6 +75,13 @@ spec:
                   name: mcp-monitoring-grafana
                   key: PASSWORD
                   optional: true
+            # A2A REST bridge authentication
+            - name: A2A_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: a2a-api-token
+                  key: TOKEN
+                  optional: true
           resources:
             requests:
               memory: "128Mi"

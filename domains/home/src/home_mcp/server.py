@@ -113,6 +113,9 @@ async def ready_check(request):
     return JSONResponse({"ready": True})
 
 
+# Import REST bridge for A2A access
+from kernow_mcp_common.base import create_rest_bridge
+
 # Create Starlette app with health endpoints and MCP
 # Use http_app() for stateless HTTP MCP transport
 mcp_app = mcp.http_app()
@@ -120,6 +123,7 @@ mcp_app = mcp.http_app()
 routes = [
     Route("/health", health_check, methods=["GET"]),
     Route("/ready", ready_check, methods=["GET"]),
+    Route("/api/call", create_rest_bridge(mcp, "home-mcp"), methods=["POST"]),
     Mount("/", app=mcp_app),
 ]
 

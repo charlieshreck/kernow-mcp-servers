@@ -150,6 +150,13 @@ spec:
                 secretKeyRef:
                   name: mcp-adguard
                   key: PASSWORD
+            # A2A REST bridge authentication
+            - name: A2A_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: a2a-api-token
+                  key: TOKEN
+                  optional: true
           volumeMounts:
             - name: kubeconfig-agentic
               mountPath: /kubeconfigs/agentic

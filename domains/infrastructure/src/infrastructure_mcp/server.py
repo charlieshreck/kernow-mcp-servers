@@ -111,13 +111,15 @@ async def ready(request):
 
 
 def main():
-    """Run the MCP server with health endpoints."""
+    """Run the MCP server with health endpoints and REST bridge."""
     import uvicorn
+    from kernow_mcp_common.base import create_rest_bridge
 
-    # Create REST routes
+    # Create REST routes including A2A bridge
     rest_routes = [
         Route("/health", health, methods=["GET"]),
         Route("/ready", ready, methods=["GET"]),
+        Route("/api/call", create_rest_bridge(mcp, "infrastructure-mcp"), methods=["POST"]),
     ]
 
     # Mount MCP app

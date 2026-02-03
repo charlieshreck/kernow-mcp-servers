@@ -291,10 +291,15 @@ def main():
     port = int(os.environ.get("PORT", "8000"))
     logger.info(f"Starting Knowledge MCP on port {port}")
 
+    # Import REST bridge for A2A access
+    from kernow_mcp_common.base import create_rest_bridge
+
     # Create combined Starlette app with health routes, webhooks, and MCP
     rest_routes = [
         Route("/health", health, methods=["GET"]),
         Route("/ready", ready, methods=["GET"]),
+        # A2A REST bridge
+        Route("/api/call", create_rest_bridge(mcp, "knowledge-mcp"), methods=["POST"]),
         # Neo4j graph API
         Route("/api/neo4j/query", api_neo4j_query, methods=["GET"]),
         Route("/api/neo4j/entity", api_neo4j_entity, methods=["GET"]),
