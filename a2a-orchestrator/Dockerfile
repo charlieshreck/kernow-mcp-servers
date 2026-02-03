@@ -1,3 +1,4 @@
+# A2A Orchestrator - Parallel specialist agents for alert triage
 FROM python:3.11-slim
 
 WORKDIR /app
