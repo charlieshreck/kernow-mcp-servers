@@ -2,9 +2,6 @@ name: Build A2A Orchestrator
 
 on:
   push:
-    paths:
-      - 'a2a-orchestrator/**'
-      - '.github/workflows/build-a2a-orchestrator.yaml'
     branches: [main]
   workflow_dispatch:
 
