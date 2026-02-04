@@ -185,6 +185,114 @@ def register_tools(mcp: FastMCP):
             return [{"error": str(e)}]
 
     @mcp.tool()
+    async def get_runbook_for_alert(
+        alertname: str,
+        context: Optional[str] = None,
+        exact_threshold: float = 0.95,
+        semantic_threshold: float = 0.70
+    ) -> dict:
+        """Tiered runbook lookup: exact alertname match first, then semantic fallback.
+
+        Args:
+            alertname: The exact alert name (e.g., KubePodCrashLooping, KubePodNotReady)
+            context: Optional additional context for semantic search (description, labels)
+            exact_threshold: Score threshold for exact match (default 0.95)
+            semantic_threshold: Score threshold for semantic fallback (default 0.70)
+
+        Returns:
+            dict with:
+                - match_type: "EXACT" | "SIMILAR" | "NO_MATCH"
+                - runbook: The matched runbook if found
+                - score: Match confidence
+                - alternatives: Other potential matches for SIMILAR
+        """
+        try:
+            # Tier 1: Exact match by alertname field
+            # Search with filter on alertname payload field
+            filter_result = await qdrant_request("/collections/runbooks/points/scroll", "POST", {
+                "filter": {
+                    "should": [
+                        {"key": "alertname", "match": {"value": alertname}},
+                        {"key": "trigger_pattern", "match": {"value": alertname}},
+                    ]
+                },
+                "limit": 5,
+                "with_payload": True
+            })
+
+            exact_matches = filter_result.get("result", {}).get("points", [])
+
+            if exact_matches:
+                best = exact_matches[0]
+                payload = best.get("payload", {})
+                return {
+                    "match_type": "EXACT",
+                    "score": 1.0,
+                    "runbook": {
+                        "id": best.get("id"),
+                        "title": payload.get("title"),
+                        "alertname": payload.get("alertname", payload.get("trigger_pattern")),
+                        "solution": payload.get("solution", ""),
+                        "steps": payload.get("steps", []),
+                        "automation_level": payload.get("automation_level", "manual"),
+                        "path": payload.get("path"),
+                        "success_count": payload.get("success_count", 0),
+                        "execution_count": payload.get("execution_count", 0),
+                    },
+                    "alternatives": []
+                }
+
+            # Tier 2: Semantic search fallback
+            search_query = alertname
+            if context:
+                search_query = f"{alertname} {context}"
+
+            semantic_results = await search_collection("runbooks", search_query, limit=5, min_score=semantic_threshold)
+
+            if semantic_results:
+                best = semantic_results[0]
+                best_score = best.get("score", 0)
+                payload = best.get("payload", {})
+
+                match_type = "SIMILAR" if best_score >= semantic_threshold else "NO_MATCH"
+
+                alternatives = []
+                if len(semantic_results) > 1:
+                    alternatives = [{
+                        "id": r.get("id"),
+                        "title": r.get("payload", {}).get("title"),
+                        "score": r.get("score")
+                    } for r in semantic_results[1:4]]
+
+                return {
+                    "match_type": match_type,
+                    "score": best_score,
+                    "runbook": {
+                        "id": best.get("id"),
+                        "title": payload.get("title"),
+                        "alertname": payload.get("alertname", payload.get("trigger_pattern")),
+                        "solution": payload.get("solution", ""),
+                        "steps": payload.get("steps", []),
+                        "automation_level": payload.get("automation_level", "manual"),
+                        "path": payload.get("path"),
+                        "success_count": payload.get("success_count", 0),
+                        "execution_count": payload.get("execution_count", 0),
+                    },
+                    "alternatives": alternatives
+                }
+
+            return {
+                "match_type": "NO_MATCH",
+                "score": 0,
+                "runbook": None,
+                "alternatives": []
+            }
+
+        except Exception as e:
+            logger.error(f"Tiered runbook lookup failed: {e}")
+            return {"error": str(e), "match_type": "ERROR"}
+
+    @mcp.tool()
     async def get_runbook(runbook_id: str) -> dict:
         """Get full runbook content by ID."""
         try:
@@ -196,7 +304,7 @@ def register_tools(mcp: FastMCP):
 
     @mcp.tool()
     async def add_runbook(title: str, trigger_pattern: str, solution: str, path: Optional[str] = None) -> dict:
-        """Add a new runbook to the knowledge base."""
+        """Add a new runbook to the knowledge base (legacy format)."""
         try:
             embedding = await get_embedding(f"{title} {trigger_pattern} {solution}")
             point_id = str(uuid4())
@@ -218,6 +326,80 @@ def register_tools(mcp: FastMCP):
             })
             return {"success": True, "id": point_id}
         except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    async def add_runbook_v2(
+        alertname: str,
+        title: str,
+        description: str,
+        steps: List[Dict[str, Any]],
+        severity: str = "warning",
+        clusters: Optional[List[str]] = None,
+        automation_level: str = "manual",
+        verification_steps: Optional[List[Dict[str, Any]]] = None,
+        rollback_steps: Optional[List[Dict[str, Any]]] = None,
+        path: Optional[str] = None
+    ) -> dict:
+        """Add a machine-executable runbook (v2 format) for alert-keyed lookup.
+
+        Args:
+            alertname: Exact alert name for matching (e.g., KubePodCrashLooping)
+            title: Human-readable title
+            description: Description of when this runbook applies
+            steps: List of execution steps, each with:
+                - action: Human description
+                - tool: MCP tool name (e.g., kubectl_delete_pod)
+                - arguments: Dict of tool arguments (supports {alert.labels.xxx} placeholders)
+                - risk: low/medium/high
+                - rollback_tool: Optional rollback tool name
+                - rollback_args: Optional rollback arguments
+            severity: Alert severity this applies to (warning, critical)
+            clusters: Optional list of clusters (prod, agentic, monit)
+            automation_level: manual, prompted, standard
+            verification_steps: Optional steps to verify fix worked
+            rollback_steps: Optional full rollback procedure
+            path: Optional source file path
+
+        Returns:
+            dict with success status and runbook ID
+        """
+        try:
+            # Build embedding from combined text for semantic search fallback
+            steps_text = " ".join(s.get("action", "") for s in steps)
+            embedding_text = f"{alertname} {title} {description} {steps_text}"
+            embedding = await get_embedding(embedding_text)
+
+            point_id = str(uuid4())
+            await qdrant_request("/collections/runbooks/points", "PUT", {
+                "points": [{
+                    "id": point_id,
+                    "vector": embedding,
+                    "payload": {
+                        # V2 schema fields
+                        "alertname": alertname,
+                        "title": title,
+                        "description": description,
+                        "steps": steps,
+                        "severity": severity,
+                        "clusters": clusters or ["prod", "agentic", "monit"],
+                        "verification_steps": verification_steps or [],
+                        "rollback_steps": rollback_steps or [],
+                        # Shared fields
+                        "trigger_pattern": alertname,  # For backwards compatibility
+                        "solution": description,  # For backwards compatibility
+                        "path": path,
+                        "automation_level": automation_level,
+                        "schema_version": "v2",
+                        "created_at": datetime.utcnow().isoformat(),
+                        "execution_count": 0,
+                        "success_count": 0
+                    }
+                }]
+            })
+            return {"success": True, "id": point_id, "alertname": alertname}
+        except Exception as e:
+            logger.error(f"Failed to add v2 runbook: {e}")
             return {"error": str(e)}
 
     @mcp.tool()
