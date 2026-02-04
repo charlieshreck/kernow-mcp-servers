@@ -13,12 +13,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm kubectl \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy shared utilities first (for Docker layer caching)
+COPY shared/kernow_mcp_common /app/shared/kernow_mcp_common
+COPY shared/pyproject.toml /app/shared/
+COPY shared/README.md /app/shared/
+
 # Copy domain-specific code (using repo root context)
 COPY domains/infrastructure/pyproject.toml .
 COPY domains/infrastructure/README.md .
 COPY domains/infrastructure/src ./src
 
 # Install dependencies
+RUN pip install --no-cache-dir /app/shared
 RUN pip install --no-cache-dir .
 
 # Health check
