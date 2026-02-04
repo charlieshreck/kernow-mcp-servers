@@ -185,7 +185,7 @@ def register_tools(mcp: FastMCP):
             return [{"error": str(e)}]
 
     @mcp.tool()
-    async def get_runbook_for_alert(
+    async def lookup_runbook_tiered(
         alertname: str,
         context: Optional[str] = None,
         exact_threshold: float = 0.95,
