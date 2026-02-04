@@ -23,6 +23,7 @@ class SpecialistFinding(BaseModel):
     evidence: List[str] = Field(default_factory=list)
     tools_called: List[str] = Field(default_factory=list)
     confidence: float = 0.0
+    latency_ms: int = 0
     error: Optional[str] = None
 
 
@@ -43,6 +44,7 @@ class InvestigateResponse(BaseModel):
     recommended_domain: str
     escalation_reason: Optional[str] = None
     fallback_used: bool = False
+    latency_ms: int = 0
 
 
 # === Plan & Decide Models ===
@@ -62,13 +64,38 @@ class DecisionAction(str, Enum):
     WAIT = "WAIT"          # Wait and re-evaluate
 
 
+class StateCapture(BaseModel):
+    """Definition for capturing pre-execution state."""
+    key: str  # Name for the captured value (e.g., "replicas")
+    tool: str  # MCP tool to call (e.g., "kubectl_get_deployment")
+    extract: str  # JSONPath or field to extract (e.g., "spec.replicas")
+
+
 class PlanStep(BaseModel):
-    """A single step in an execution plan."""
+    """A single step in an execution plan - v2 schema with tool-based execution."""
     order: int
-    action: str
+    action: str  # Human-readable description
+
+    # Tool-based execution (preferred)
+    tool: Optional[str] = None  # MCP tool name (e.g., "kubectl_restart_deployment")
+    arguments: Optional[Dict[str, Any]] = None  # Tool arguments
+
+    # Legacy command support (deprecated, for backwards compatibility)
     command: Optional[str] = None
-    rollback: Optional[str] = None
+
+    # Pre-execution state capture for rollback
+    pre_capture: Optional[List[StateCapture]] = None
+
+    # Rollback configuration
+    rollback_tool: Optional[str] = None
+    rollback_args: Optional[Dict[str, Any]] = None  # Can use {captured.key} placeholders
+    rollback: Optional[str] = None  # Legacy command-based rollback (deprecated)
+
     risk: str = "low"  # low, medium, high
+
+    def is_tool_based(self) -> bool:
+        """Check if this step uses tool-based execution."""
+        return self.tool is not None and self.arguments is not None
 
 
 class PlanAndDecideRequest(BaseModel):

@@ -3,13 +3,29 @@
 import os
 import logging
 import asyncio
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+# Import canonical models from models.py - single source of truth
+from a2a_orchestrator.models import (
+    InvestigationGrade,
+    SpecialistFinding,
+    InvestigateRequest as InvestigateRequestModel,
+    InvestigateResponse as InvestigateResponseModel,
+    PlanStep,
+    PlanMatchType,
+    DecisionAction,
+    PlanAndDecideRequest as PlanRequestModel,
+    PlanAndDecideResponse as PlanResponseModel,
+    ValidateAndDocumentRequest as ValidateRequestModel,
+    ValidateAndDocumentResponse as ValidateResponseModel,
+    IncidentDocument,
+    ValidationVerdict,
+)
 from a2a_orchestrator.specialists import (
     devops_investigate,
     network_investigate,
@@ -31,20 +47,22 @@ app = FastAPI(
 
 
 # =============================================================================
-# Request/Response Models
+# Request/Response Models (API layer - use canonical models from models.py)
 # =============================================================================
 
 class AlertLabels(BaseModel):
+    """Alert labels for Kubernetes alerts."""
     namespace: Optional[str] = None
     pod: Optional[str] = None
     service: Optional[str] = None
     node: Optional[str] = None
-    # Allow any additional labels
+
     class Config:
         extra = "allow"
 
 
 class Alert(BaseModel):
+    """Alert input for investigation."""
     name: str
     labels: AlertLabels = AlertLabels()
     severity: str = "warning"
@@ -53,30 +71,14 @@ class Alert(BaseModel):
 
 
 class InvestigateRequest(BaseModel):
+    """API request for investigation."""
     request_id: str
     alert: Alert
     context: dict = {}
 
 
-class Finding(BaseModel):
-    agent: str
-    status: str  # PASS, WARN, FAIL, ERROR
-    issue: Optional[str] = None
-    evidence: Optional[str] = None
-    recommendation: Optional[str] = None
-    tools_used: list[str] = []
-    latency_ms: int = 0
-
-
-class InvestigateResponse(BaseModel):
-    request_id: str
-    verdict: str  # ACTIONABLE, UNKNOWN, FALSE_POSITIVE
-    confidence: float
-    findings: list[Finding]
-    synthesis: str
-    suggested_action: Optional[str] = None
-    fallback_used: bool = False
-    latency_ms: int = 0
+# Response uses canonical InvestigateResponseModel from models.py
+# Finding uses SpecialistFinding from models.py
 
 
 # =============================================================================
@@ -101,7 +103,7 @@ DOMAIN_AUTHORITY = {
 }
 
 
-async def investigate_parallel(alert: Alert, timeout: float = 15.0) -> list[Finding]:
+async def investigate_parallel(alert: Alert, timeout: float = 15.0) -> List[SpecialistFinding]:
     """Fan out to all specialists in parallel with timeout."""
     tasks = {}
 
@@ -120,21 +122,35 @@ async def investigate_parallel(alert: Alert, timeout: float = 15.0) -> list[Find
         task.cancel()
         logger.warning(f"Specialist timed out after {timeout}s")
 
-    # Collect results
+    # Collect results - convert to SpecialistFinding
     findings = []
     for name, task in tasks.items():
         if task in done and not task.cancelled():
             try:
                 result = task.result()
                 if result:
-                    findings.append(result)
+                    # Convert specialist Finding to canonical SpecialistFinding
+                    findings.append(SpecialistFinding(
+                        specialist=result.agent,
+                        status=result.status,
+                        summary=result.issue or f"Alert: {alert.name}",
+                        evidence=result.evidence if isinstance(result.evidence, list) else [result.evidence] if result.evidence else [],
+                        tools_called=result.tools_used,
+                        confidence=0.8 if result.status in ("PASS", "WARN") else 0.5,
+                        latency_ms=result.latency_ms,
+                        error=None
+                    ))
             except Exception as e:
                 logger.error(f"Specialist {name} failed: {e}")
-                findings.append(Finding(
-                    agent=name,
+                findings.append(SpecialistFinding(
+                    specialist=name,
                     status="ERROR",
-                    issue=f"Investigation failed: {str(e)[:100]}",
-                    tools_used=[]
+                    summary=f"Investigation failed: {str(e)[:100]}",
+                    evidence=[],
+                    tools_called=[],
+                    confidence=0.0,
+                    latency_ms=0,
+                    error=str(e)[:200]
                 ))
 
     return findings
@@ -159,7 +175,7 @@ async def list_agents():
     }
 
 
-@app.post("/v1/investigate", response_model=InvestigateResponse)
+@app.post("/v1/investigate", response_model=InvestigateResponseModel)
 async def investigate(request: InvestigateRequest):
     """Investigate an alert using parallel specialists."""
     start_time = datetime.now()
@@ -176,15 +192,38 @@ async def investigate(request: InvestigateRequest):
             domain_weights=DOMAIN_AUTHORITY
         )
 
+        # Determine grade based on findings
+        fail_count = sum(1 for f in findings if f.status == "FAIL")
+        error_count = sum(1 for f in findings if f.status == "ERROR")
+        total = len(findings) or 1
+
+        if error_count > total / 2:
+            grade = InvestigationGrade.INCONCLUSIVE
+        elif fail_count > 0 and any(f.status == "PASS" for f in findings):
+            grade = InvestigationGrade.CONFLICTING
+        elif fail_count > 0:
+            grade = InvestigationGrade.CLEAR
+        else:
+            grade = InvestigationGrade.PARTIAL
+
+        # Determine recommended domain based on highest-weighted failing specialist
+        recommended_domain = "infrastructure"  # default
+        for name in ["security", "devops", "sre", "network", "database"]:
+            for f in findings:
+                if f.specialist == name and f.status == "FAIL":
+                    recommended_domain = name
+                    break
+
         latency_ms = int((datetime.now() - start_time).total_seconds() * 1000)
 
-        return InvestigateResponse(
+        return InvestigateResponseModel(
             request_id=request.request_id,
-            verdict=synthesis_result.verdict,
+            grade=grade,
             confidence=synthesis_result.confidence,
             findings=findings,
             synthesis=synthesis_result.synthesis,
-            suggested_action=synthesis_result.suggested_action,
+            recommended_domain=recommended_domain,
+            escalation_reason=None if synthesis_result.verdict == "ACTIONABLE" else "Investigation inconclusive",
             fallback_used=False,
             latency_ms=latency_ms
         )
@@ -196,92 +235,51 @@ async def investigate(request: InvestigateRequest):
         fallback_result = await qwen_fallback_assess(request.alert)
         latency_ms = int((datetime.now() - start_time).total_seconds() * 1000)
 
-        return InvestigateResponse(
+        return InvestigateResponseModel(
             request_id=request.request_id,
-            verdict=fallback_result.verdict,
+            grade=InvestigationGrade.INCONCLUSIVE,
             confidence=fallback_result.confidence,
-            findings=[Finding(
-                agent="qwen-fallback",
+            findings=[SpecialistFinding(
+                specialist="qwen-fallback",
                 status="WARN" if fallback_result.verdict == "ACTIONABLE" else "PASS",
-                issue=fallback_result.synthesis,
-                recommendation=fallback_result.suggested_action,
-                tools_used=[]
+                summary=fallback_result.synthesis,
+                evidence=[],
+                tools_called=[],
+                confidence=fallback_result.confidence,
+                latency_ms=0,
+                error=None
             )],
             synthesis=fallback_result.synthesis,
-            suggested_action=fallback_result.suggested_action,
+            recommended_domain="infrastructure",
+            escalation_reason="Fallback assessment used",
             fallback_used=True,
             latency_ms=latency_ms
         )
 
 
 # =============================================================================
-# Plan & Decide Models
+# Plan & Decide - Use canonical models from models.py
+# PlanStep, PlanAndDecideRequest/Response, ValidateAndDocumentRequest/Response
+# are imported at the top of the file
 # =============================================================================
 
-class PlanStep(BaseModel):
-    order: int
-    action: str
-    command: Optional[str] = None
-    rollback: Optional[str] = None
-    risk: str = "low"
-
-
+# API-specific request models that accept the Alert model defined here
 class PlanAndDecideRequest(BaseModel):
+    """API request for plan generation."""
     request_id: str
     alert: Alert
-    investigation: InvestigateResponse
+    investigation: dict  # Accept dict for flexibility, convert to model internally
     context: dict = {}
-
-
-class PlanAndDecideResponse(BaseModel):
-    request_id: str
-    match_type: str  # EXACT, SIMILAR, GENERATED, NO_PLAN
-    runbook_id: Optional[str] = None
-    runbook_name: Optional[str] = None
-    runbook_score: Optional[float] = None
-    plan: list[PlanStep]
-    tweaks_applied: list[str] = []
-    decision: str  # EXECUTE, ESCALATE, WAIT
-    decision_rationale: str
-    confidence: float
-    risk_level: str = "medium"
-    requires_approval: bool = True
-    escalation_reason: Optional[str] = None
-    fallback_used: bool = False
-
-
-# =============================================================================
-# Validate & Document Models
-# =============================================================================
-
-class IncidentDocument(BaseModel):
-    title: str
-    summary: str
-    timeline: list[str]
-    root_cause: str
-    resolution: str
-    lessons_learned: list[str] = []
-    runbook_proposal: Optional[str] = None
 
 
 class ValidateAndDocumentRequest(BaseModel):
+    """API request for validation."""
     request_id: str
     alert: Alert
-    investigation: InvestigateResponse
-    plan: PlanAndDecideResponse
+    investigation: dict
+    plan: dict
     execution_result: dict
     context: dict = {}
-
-
-class ValidateAndDocumentResponse(BaseModel):
-    request_id: str
-    verdict: str  # RESOLVED, PARTIAL, STILL_FAILING, FALSE_POSITIVE
-    validation_evidence: list[str]
-    confidence: float
-    document: IncidentDocument
-    runbook_action: Optional[str] = None  # UPDATE, CREATE, REVIEW
-    escalation_reason: Optional[str] = None
-    fallback_used: bool = False
 
 
 # =============================================================================
@@ -292,23 +290,66 @@ RUNBOOK_EXACT_THRESHOLD = float(os.environ.get("RUNBOOK_EXACT_THRESHOLD", "0.95"
 RUNBOOK_SIMILAR_THRESHOLD = float(os.environ.get("RUNBOOK_SIMILAR_THRESHOLD", "0.80"))
 
 
-async def search_runbooks_for_alert(alert: Alert, investigation: InvestigateResponse) -> dict:
-    """Search knowledge-mcp for matching runbooks."""
+async def search_runbooks_for_alert(alert: Alert, investigation: dict) -> dict:
+    """Search knowledge-mcp for matching runbooks using tiered lookup.
+
+    Tier 1: Exact match by alertname
+    Tier 2: Semantic search fallback
+    """
     from a2a_orchestrator.mcp_client import call_mcp_tool
 
-    # Build search query from alert and findings
-    query_parts = [alert.name]
+    # Build context for semantic search fallback
+    context_parts = []
     if alert.description:
-        query_parts.append(alert.description[:100])
+        context_parts.append(alert.description[:100])
 
     # Add key issues from investigation
-    for finding in investigation.findings[:3]:
-        if finding.issue:
-            query_parts.append(finding.issue[:50])
+    findings = investigation.get("findings", [])
+    for finding in findings[:3]:
+        issue = finding.get("summary") or finding.get("issue")
+        if issue:
+            context_parts.append(issue[:50])
 
-    query = " ".join(query_parts)[:200]
+    context = " ".join(context_parts)[:300] if context_parts else None
 
-    result = await call_mcp_tool("knowledge", "search_runbooks", {"query": query, "limit": 3})
+    # Use tiered lookup: exact match by alertname first, then semantic fallback
+    result = await call_mcp_tool("knowledge", "lookup_runbook_tiered", {
+        "alertname": alert.name,
+        "context": context,
+        "exact_threshold": RUNBOOK_EXACT_THRESHOLD,
+        "semantic_threshold": RUNBOOK_SIMILAR_THRESHOLD
+    })
+
+    # Convert tiered lookup response to expected format
+    if result.get("status") == "success":
+        output = result.get("output", {})
+        if isinstance(output, str):
+            import json
+            try:
+                output = json.loads(output)
+            except json.JSONDecodeError:
+                return result
+
+        match_type = output.get("match_type", "NO_MATCH")
+        runbook = output.get("runbook")
+
+        if runbook and match_type in ("EXACT", "SIMILAR"):
+            # Transform to list format expected by downstream code
+            return {
+                "status": "success",
+                "output": [{
+                    "id": runbook.get("id"),
+                    "score": output.get("score", 1.0 if match_type == "EXACT" else 0.8),
+                    "name": runbook.get("title"),
+                    "alertname": runbook.get("alertname"),
+                    "steps": runbook.get("steps", []),
+                    "automation_level": runbook.get("automation_level", "manual"),
+                    "path": runbook.get("path"),
+                    "match_type": match_type,
+                    "alternatives": output.get("alternatives", [])
+                }]
+            }
+
     return result
 
 
@@ -322,34 +363,62 @@ def classify_runbook_match(score: float) -> str:
         return "NO_MATCH"
 
 
-async def generate_plan_from_investigation(alert: Alert, investigation: InvestigateResponse) -> list[PlanStep]:
+async def generate_plan_from_investigation(alert: Alert, investigation: dict) -> List[PlanStep]:
     """Generate a plan based on investigation findings when no runbook matches."""
     from a2a_orchestrator.llm import gemini_analyze
+    from a2a_orchestrator.tool_catalog import TOOL_CATALOG, command_to_tool
 
-    # Use Gemini to generate plan steps
+    # Use Gemini to generate plan steps - handle both dict and model findings
+    findings = investigation.get("findings", [])
     findings_text = "\n".join([
-        f"- {f.agent}: {f.issue} (recommendation: {f.recommendation})"
-        for f in investigation.findings if f.issue
+        f"- {f.get('specialist', f.get('agent', 'unknown'))}: {f.get('summary', f.get('issue', ''))} (recommendation: {f.get('recommendation', 'N/A')})"
+        for f in findings if f.get('summary') or f.get('issue')
     ])
 
-    system_prompt = """You are a remediation planner. Generate a step-by-step plan to resolve this alert.
+    # Available tools for the plan
+    tools_list = "\n".join([
+        f"- {name}: {spec.description} (required args: {spec.required_args})"
+        for name, spec in TOOL_CATALOG.items()
+    ])
+
+    system_prompt = f"""You are a remediation planner. Generate a step-by-step plan to resolve this alert.
+
+IMPORTANT: Use tool-based execution instead of raw commands. Available tools:
+{tools_list}
 
 Output JSON with a "steps" array where each step has:
 - order: step number (1, 2, 3...)
-- action: what to do
-- command: kubectl/CLI command if applicable
-- rollback: how to undo this step
-- risk: low/medium/high"""
+- action: what to do (human-readable description)
+- tool: MCP tool name from the list above (e.g., "kubectl_restart_deployment")
+- arguments: dict of tool arguments (e.g., {{"deployment_name": "my-app", "namespace": "prod"}})
+- rollback_tool: tool to undo this step (optional)
+- rollback_args: arguments for rollback tool (optional)
+- risk: low/medium/high
+
+Example step:
+{{"order": 1, "action": "Restart the failing pod", "tool": "kubectl_delete_pod", "arguments": {{"pod_name": "app-xyz", "namespace": "prod"}}, "risk": "medium"}}"""
 
     try:
         result = await gemini_analyze(
             system_prompt=system_prompt,
             alert=alert,
-            evidence=f"Investigation findings:\n{findings_text}\n\nSynthesis: {investigation.synthesis}"
+            evidence=f"Investigation findings:\n{findings_text}\n\nSynthesis: {investigation.get('synthesis', 'No synthesis available')}"
         )
 
         steps = result.get("steps", [])
-        return [PlanStep(**s) for s in steps[:5]]  # Max 5 steps
+        plan_steps = []
+
+        for s in steps[:5]:  # Max 5 steps
+            # If Gemini returned legacy command, try to convert it
+            if s.get("command") and not s.get("tool"):
+                tool_name, args = command_to_tool(s["command"])
+                if tool_name:
+                    s["tool"] = tool_name
+                    s["arguments"] = args
+
+            plan_steps.append(PlanStep(**s))
+
+        return plan_steps
 
     except Exception as e:
         logger.warning(f"Plan generation failed: {e}")
@@ -357,24 +426,28 @@ Output JSON with a "steps" array where each step has:
         return [PlanStep(
             order=1,
             action="Manual investigation required",
-            command=None,
-            rollback=None,
+            tool=None,
+            arguments=None,
             risk="low"
         )]
 
 
 def decide_action(
     match_type: str,
-    investigation: InvestigateResponse,
-    plan: list[PlanStep],
+    investigation: dict,
+    plan: List[PlanStep],
     alert: Alert
 ) -> tuple[str, str, bool]:
     """Decide whether to execute, escalate, or wait.
 
     Returns: (decision, rationale, requires_approval)
     """
+    # Get grade/confidence from investigation dict
+    grade = investigation.get("grade", "INCONCLUSIVE")
+    confidence = investigation.get("confidence", 0.5)
+
     # Always escalate if investigation was inconclusive or conflicting
-    if investigation.verdict == "UNKNOWN":
+    if grade in ("INCONCLUSIVE", "CONFLICTING"):
         return "ESCALATE", "Investigation inconclusive - human review needed", True
 
     # Always escalate if no plan
@@ -387,7 +460,7 @@ def decide_action(
         return "EXECUTE", f"Plan has {len(high_risk_steps)} high-risk steps - approval required", True
 
     # EXACT match with high confidence can auto-execute
-    if match_type == "EXACT" and investigation.confidence >= 0.9:
+    if match_type == "EXACT" and confidence >= 0.9:
         if alert.severity in ("critical", "error"):
             return "EXECUTE", "Exact runbook match with high confidence - approval required for critical", True
         else:
@@ -405,9 +478,13 @@ def decide_action(
     return "ESCALATE", "Unable to determine safe action", True
 
 
-@app.post("/v1/plan_and_decide", response_model=PlanAndDecideResponse)
+@app.post("/v1/plan_and_decide", response_model=PlanResponseModel)
+@app.post("/v1/plan", response_model=PlanResponseModel)
 async def plan_and_decide(request: PlanAndDecideRequest):
-    """Generate execution plan and decide action based on investigation."""
+    """Generate execution plan and decide action based on investigation.
+
+    Available at both /v1/plan_and_decide (legacy) and /v1/plan (preferred).
+    """
     logger.info(f"Planning for alert: {request.alert.name} [{request.request_id}]")
 
     try:
@@ -423,10 +500,32 @@ async def plan_and_decide(request: PlanAndDecideRequest):
 
         if runbook_result.get("status") == "success":
             output = runbook_result.get("output", "")
-            # Parse runbook search results (expecting JSON or structured output)
+            # Parse runbook search results (handles JSON, markdown, or structured output)
             try:
                 import json
-                runbooks = json.loads(output) if isinstance(output, str) else output
+                import re
+
+                runbooks = None
+                if isinstance(output, list):
+                    runbooks = output
+                elif isinstance(output, str):
+                    # Try direct JSON parse first
+                    try:
+                        runbooks = json.loads(output)
+                    except json.JSONDecodeError:
+                        # Try to extract JSON from markdown code blocks
+                        json_match = re.search(r'```(?:json)?\s*([\[\{].*?[\]\}])\s*```', output, re.DOTALL)
+                        if json_match:
+                            runbooks = json.loads(json_match.group(1))
+                        else:
+                            # Try to find bare JSON array or object
+                            array_match = re.search(r'(\[[\s\S]*\])', output)
+                            if array_match:
+                                try:
+                                    runbooks = json.loads(array_match.group(1))
+                                except json.JSONDecodeError:
+                                    pass
+
                 if runbooks and isinstance(runbooks, list) and len(runbooks) > 0:
                     best_match = runbooks[0]
                     runbook_score = best_match.get("score", 0)
@@ -436,14 +535,27 @@ async def plan_and_decide(request: PlanAndDecideRequest):
                         runbook_id = best_match.get("id")
                         runbook_name = best_match.get("name")
 
-                        # Extract steps from runbook
+                        # Extract steps from runbook with tool-based execution support
+                        from a2a_orchestrator.tool_catalog import command_to_tool
+
                         steps = best_match.get("steps", [])
                         for i, step in enumerate(steps[:5]):
+                            tool_name = step.get("tool")
+                            arguments = step.get("arguments")
+
+                            # Convert legacy command to tool if needed
+                            if not tool_name and step.get("command"):
+                                tool_name, arguments = command_to_tool(step.get("command"))
+
                             plan.append(PlanStep(
                                 order=i + 1,
                                 action=step.get("action", str(step)),
-                                command=step.get("command"),
-                                rollback=step.get("rollback"),
+                                tool=tool_name,
+                                arguments=arguments,
+                                command=step.get("command"),  # Keep for backwards compat
+                                rollback_tool=step.get("rollback_tool"),
+                                rollback_args=step.get("rollback_args"),
+                                rollback=step.get("rollback"),  # Keep for backwards compat
                                 risk=step.get("risk", "low")
                             ))
 
@@ -454,14 +566,19 @@ async def plan_and_decide(request: PlanAndDecideRequest):
                 logger.warning(f"Failed to parse runbook results: {e}")
 
         # If no runbook match, generate plan from investigation
-        if match_type in ("NO_MATCH", "NO_PLAN") and request.investigation.verdict == "ACTIONABLE":
-            plan = await generate_plan_from_investigation(request.alert, request.investigation)
+        # Handle both dict investigation and "verdict" or "grade" field for compatibility
+        investigation_dict = request.investigation
+        grade = investigation_dict.get("grade", "CLEAR")
+        is_actionable = grade in ("CLEAR", "PARTIAL") or investigation_dict.get("verdict") == "ACTIONABLE"
+
+        if match_type in ("NO_MATCH", "NO_PLAN") and is_actionable:
+            plan = await generate_plan_from_investigation(request.alert, investigation_dict)
             if plan:
                 match_type = "GENERATED"
 
         # Decide action
         decision, rationale, requires_approval = decide_action(
-            match_type, request.investigation, plan, request.alert
+            match_type, investigation_dict, plan, request.alert
         )
 
         # Calculate risk level
@@ -472,17 +589,19 @@ async def plan_and_decide(request: PlanAndDecideRequest):
         else:
             risk_level = "low"
 
-        return PlanAndDecideResponse(
+        investigation_confidence = investigation_dict.get("confidence", 0.5)
+
+        return PlanResponseModel(
             request_id=request.request_id,
-            match_type=match_type,
+            match_type=PlanMatchType(match_type) if match_type in [e.value for e in PlanMatchType] else PlanMatchType.NO_PLAN,
             runbook_id=runbook_id,
             runbook_name=runbook_name,
             runbook_score=runbook_score if runbook_score > 0 else None,
             plan=plan,
             tweaks_applied=tweaks,
-            decision=decision,
+            decision=DecisionAction.EXECUTE if decision == "EXECUTE" else DecisionAction.ESCALATE if decision == "ESCALATE" else DecisionAction.WAIT,
             decision_rationale=rationale,
-            confidence=request.investigation.confidence * (runbook_score if runbook_score > 0 else 0.5),
+            confidence=investigation_confidence * (runbook_score if runbook_score > 0 else 0.5),
             risk_level=risk_level,
             requires_approval=requires_approval,
             escalation_reason=rationale if decision == "ESCALATE" else None,
@@ -491,12 +610,12 @@ async def plan_and_decide(request: PlanAndDecideRequest):
 
     except Exception as e:
         logger.error(f"Plan and decide failed: {e}")
-        return PlanAndDecideResponse(
+        return PlanResponseModel(
             request_id=request.request_id,
-            match_type="NO_PLAN",
+            match_type=PlanMatchType.NO_PLAN,
             plan=[],
             tweaks_applied=[],
-            decision="ESCALATE",
+            decision=DecisionAction.ESCALATE,
             decision_rationale=f"Planning failed: {str(e)[:100]}",
             confidence=0.0,
             risk_level="high",
@@ -581,26 +700,38 @@ async def validate_resolution(alert: Alert, execution_result: dict) -> tuple[str
 
 async def generate_incident_document(
     alert: Alert,
-    investigation: InvestigateResponse,
-    plan: PlanAndDecideResponse,
+    investigation: dict,
+    plan: dict,
     execution_result: dict,
     verdict: str
 ) -> IncidentDocument:
     """Generate incident documentation."""
     from datetime import datetime
 
+    # Extract values from dicts
+    inv_grade = investigation.get("grade", "UNKNOWN")
+    inv_confidence = investigation.get("confidence", 0.5)
+    inv_synthesis = investigation.get("synthesis", "No synthesis available")
+
+    plan_runbook_name = plan.get("runbook_name")
+    plan_match_type = plan.get("match_type", "UNKNOWN")
+    plan_decision = plan.get("decision", "UNKNOWN")
+    plan_steps = plan.get("plan", [])
+    plan_tweaks = plan.get("tweaks_applied", [])
+    plan_runbook_id = plan.get("runbook_id")
+
     # Build timeline
     timeline = [
         f"Alert received: {alert.name} ({alert.severity})",
-        f"Investigation completed: {investigation.verdict} ({investigation.confidence:.0%} confidence)",
+        f"Investigation completed: {inv_grade} ({inv_confidence:.0%} confidence)",
     ]
 
-    if plan.runbook_name:
-        timeline.append(f"Matched runbook: {plan.runbook_name} ({plan.match_type})")
+    if plan_runbook_name:
+        timeline.append(f"Matched runbook: {plan_runbook_name} ({plan_match_type})")
     else:
-        timeline.append(f"Plan generated: {plan.match_type}")
+        timeline.append(f"Plan generated: {plan_match_type}")
 
-    timeline.append(f"Decision: {plan.decision}")
+    timeline.append(f"Decision: {plan_decision}")
 
     if execution_result.get("started_at"):
         timeline.append(f"Execution started: {execution_result['started_at']}")
@@ -610,31 +741,34 @@ async def generate_incident_document(
     timeline.append(f"Validation result: {verdict}")
 
     # Root cause from investigation
-    root_cause = investigation.synthesis
+    root_cause = inv_synthesis
 
     # Resolution summary
     if verdict == "RESOLVED":
-        resolution = f"Successfully resolved via {plan.match_type} plan"
-        if plan.runbook_name:
-            resolution += f" (runbook: {plan.runbook_name})"
+        resolution = f"Successfully resolved via {plan_match_type} plan"
+        if plan_runbook_name:
+            resolution += f" (runbook: {plan_runbook_name})"
     elif verdict == "FALSE_POSITIVE":
         resolution = "Determined to be a false positive - no action required"
     else:
-        resolution = f"Partially resolved or still failing - manual follow-up required"
+        resolution = "Partially resolved or still failing - manual follow-up required"
 
     # Lessons learned
     lessons = []
-    if plan.match_type == "SIMILAR":
-        lessons.append(f"Runbook '{plan.runbook_name}' should be updated to handle this case")
-    if plan.match_type == "GENERATED":
+    if plan_match_type == "SIMILAR":
+        lessons.append(f"Runbook '{plan_runbook_name}' should be updated to handle this case")
+    if plan_match_type == "GENERATED":
         lessons.append("Consider creating a new runbook for this alert pattern")
     if verdict == "FALSE_POSITIVE":
         lessons.append("Consider tuning alert threshold or adding suppression rule")
 
     # Runbook proposal for non-exact matches
     runbook_proposal = None
-    if plan.match_type in ("SIMILAR", "GENERATED") and verdict == "RESOLVED":
-        steps_text = "\n".join([f"{s.order}. {s.action}" for s in plan.plan])
+    if plan_match_type in ("SIMILAR", "GENERATED") and verdict == "RESOLVED":
+        steps_text = "\n".join([
+            f"{s.get('order', i+1)}. {s.get('action', 'Unknown action')}"
+            for i, s in enumerate(plan_steps)
+        ])
         runbook_proposal = f"""
 ## Proposed Runbook: {alert.name}
 
@@ -647,13 +781,13 @@ Labels: {dict(alert.labels)}
 
 ### Notes
 - Generated from successful resolution on {datetime.now().isoformat()}
-- Original match: {plan.runbook_name or 'None'}
-- Tweaks applied: {', '.join(plan.tweaks_applied) if plan.tweaks_applied else 'None'}
+- Original match: {plan_runbook_name or 'None'}
+- Tweaks applied: {', '.join(plan_tweaks) if plan_tweaks else 'None'}
 """
 
     return IncidentDocument(
         title=f"Incident: {alert.name}",
-        summary=f"{verdict} - {investigation.synthesis[:200]}",
+        summary=f"{verdict} - {inv_synthesis[:200]}",
         timeline=timeline,
         root_cause=root_cause,
         resolution=resolution,
@@ -662,9 +796,13 @@ Labels: {dict(alert.labels)}
     )
 
 
-@app.post("/v1/validate_and_document", response_model=ValidateAndDocumentResponse)
+@app.post("/v1/validate_and_document", response_model=ValidateResponseModel)
+@app.post("/v1/validate", response_model=ValidateResponseModel)
 async def validate_and_document(request: ValidateAndDocumentRequest):
-    """Validate resolution and generate incident documentation."""
+    """Validate resolution and generate incident documentation.
+
+    Available at both /v1/validate_and_document (legacy) and /v1/validate (preferred).
+    """
     logger.info(f"Validating resolution for: {request.alert.name} [{request.request_id}]")
 
     try:
@@ -682,19 +820,23 @@ async def validate_and_document(request: ValidateAndDocumentRequest):
             verdict
         )
 
-        # Determine runbook action
+        # Determine runbook action - access plan as dict
+        plan_dict = request.plan
+        plan_match_type = plan_dict.get("match_type", "")
+        plan_runbook_id = plan_dict.get("runbook_id")
+
         runbook_action = None
         if verdict == "RESOLVED":
-            if request.plan.match_type == "SIMILAR":
+            if plan_match_type == "SIMILAR":
                 runbook_action = "UPDATE"
-            elif request.plan.match_type == "GENERATED":
+            elif plan_match_type == "GENERATED":
                 runbook_action = "CREATE"
-        elif verdict == "FALSE_POSITIVE" and request.plan.runbook_id:
+        elif verdict == "FALSE_POSITIVE" and plan_runbook_id:
             runbook_action = "REVIEW"
 
-        return ValidateAndDocumentResponse(
+        return ValidateResponseModel(
             request_id=request.request_id,
-            verdict=verdict,
+            verdict=ValidationVerdict(verdict) if verdict in [e.value for e in ValidationVerdict] else ValidationVerdict.STILL_FAILING,
             validation_evidence=evidence,
             confidence=confidence,
             document=document,
@@ -705,9 +847,9 @@ async def validate_and_document(request: ValidateAndDocumentRequest):
 
     except Exception as e:
         logger.error(f"Validation failed: {e}")
-        return ValidateAndDocumentResponse(
+        return ValidateResponseModel(
             request_id=request.request_id,
-            verdict="STILL_FAILING",
+            verdict=ValidationVerdict.STILL_FAILING,
             validation_evidence=[f"Validation error: {str(e)[:100]}"],
             confidence=0.0,
             document=IncidentDocument(
