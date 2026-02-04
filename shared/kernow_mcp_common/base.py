@@ -174,13 +174,27 @@ def create_rest_bridge(
         logger.info(f"REST bridge call: {tool_name}({arguments})")
 
         try:
-            # Call the tool via FastMCP's internal mechanism
-            result = await mcp.call_tool(tool_name, arguments)
+            # Get the tool from FastMCP registry
+            tool = await mcp.get_tool(tool_name)
+            if not tool:
+                return JSONResponse({
+                    "status": "error",
+                    "tool": tool_name,
+                    "error": f"Tool not found: {tool_name}"
+                }, status_code=404)
 
-            # Extract content from result
-            if hasattr(result, 'content') and result.content:
-                # FastMCP returns TextContent objects
-                output = result.content[0].text if hasattr(result.content[0], 'text') else str(result.content[0])
+            # Call the tool's function with arguments
+            import inspect
+            if inspect.iscoroutinefunction(tool.fn):
+                result = await tool.fn(**arguments)
+            else:
+                result = tool.fn(**arguments)
+
+            # Format the result
+            if isinstance(result, dict):
+                output = result
+            elif isinstance(result, (list, tuple)):
+                output = result
             else:
                 output = str(result)
 
@@ -189,6 +203,15 @@ def create_rest_bridge(
                 "tool": tool_name,
                 "output": output
             })
+
+        except TypeError as e:
+            # Likely a missing or invalid argument
+            logger.error(f"Tool call failed: {tool_name} - {e}")
+            return JSONResponse({
+                "status": "error",
+                "tool": tool_name,
+                "error": f"Invalid arguments: {e}"
+            }, status_code=400)
 
         except Exception as e:
             logger.error(f"Tool call failed: {tool_name} - {e}")
