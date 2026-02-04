@@ -1,15 +1,16 @@
-# A2A Orchestrator - Parallel specialist agents for alert triage
-# Build: v2 - Pydantic model fix
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies first (for caching)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies
+COPY pyproject.toml .
+RUN pip install --no-cache-dir .
 
 # Copy source
-COPY src/a2a_orchestrator ./a2a_orchestrator
+COPY src/ src/
+
+# Install the package
+RUN pip install --no-cache-dir -e .
 
 # Run as non-root
 RUN useradd -m -u 1000 app

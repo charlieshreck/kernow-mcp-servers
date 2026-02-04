@@ -3,10 +3,10 @@
 import os
 import json
 import logging
+from dataclasses import dataclass
+from typing import Optional
 
 import httpx
-
-from a2a_orchestrator.models import SynthesisResult
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +15,13 @@ QWEN_URL = os.environ.get("QWEN_URL", "http://litellm.ai-platform.svc.cluster.lo
 QWEN_API_KEY = os.environ.get("QWEN_API_KEY", "")
 QWEN_MODEL = os.environ.get("QWEN_MODEL", "qwen/qwen2.5-coder-14b")
 
-# Alias for backward compatibility
-FallbackResult = SynthesisResult
+
+@dataclass
+class FallbackResult:
+    verdict: str  # ACTIONABLE, UNKNOWN, FALSE_POSITIVE
+    confidence: float
+    synthesis: str
+    suggested_action: Optional[str] = None
 
 
 FALLBACK_PROMPT = """You are a simplified alert assessment agent. Analyze this alert and determine if it requires action.

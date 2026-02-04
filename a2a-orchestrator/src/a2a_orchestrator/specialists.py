@@ -1,9 +1,9 @@
 """Specialist Agents - Domain-specific investigation functions."""
 
+import os
 import logging
 from datetime import datetime
 
-from a2a_orchestrator.models import Finding
 from a2a_orchestrator.mcp_client import (
     kubectl_get_pods,
     kubectl_get_events,
@@ -19,6 +19,20 @@ from a2a_orchestrator.mcp_client import (
 from a2a_orchestrator.llm import gemini_analyze
 
 logger = logging.getLogger(__name__)
+
+
+# Pydantic model imported from server to avoid circular import
+class Finding:
+    def __init__(self, agent: str, status: str, issue: str = None,
+                 evidence: str = None, recommendation: str = None,
+                 tools_used: list = None, latency_ms: int = 0):
+        self.agent = agent
+        self.status = status
+        self.issue = issue
+        self.evidence = evidence
+        self.recommendation = recommendation
+        self.tools_used = tools_used or []
+        self.latency_ms = latency_ms
 
 
 # =============================================================================

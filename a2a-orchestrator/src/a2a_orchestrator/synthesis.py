@@ -1,11 +1,20 @@
 """Synthesis - Combine specialist findings into final verdict."""
 
 import logging
+from dataclasses import dataclass
+from typing import Optional
 
-from a2a_orchestrator.models import SynthesisResult
 from a2a_orchestrator.llm import gemini_synthesize
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SynthesisResult:
+    verdict: str  # ACTIONABLE, UNKNOWN, FALSE_POSITIVE
+    confidence: float
+    synthesis: str
+    suggested_action: Optional[str] = None
 
 
 SEVERITY_SCORES = {
