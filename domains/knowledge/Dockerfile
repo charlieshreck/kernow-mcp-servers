@@ -10,12 +10,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy shared utilities first (for Docker layer caching)
+COPY shared/kernow_mcp_common /app/shared/kernow_mcp_common
+COPY shared/pyproject.toml /app/shared/
+COPY shared/README.md /app/shared/
+
 # Copy domain-specific code (using repo root context)
 COPY domains/knowledge/pyproject.toml .
 COPY domains/knowledge/README.md .
 COPY domains/knowledge/src ./src
 
 # Install dependencies
+RUN pip install --no-cache-dir /app/shared
 RUN pip install --no-cache-dir .
 
 # Health check
