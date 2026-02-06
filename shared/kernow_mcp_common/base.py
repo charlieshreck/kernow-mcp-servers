@@ -4,7 +4,7 @@ import logging
 import os
 from typing import Optional, Callable, Awaitable, Any
 
-from fastmcp import FastMCP
+from fastmcp import FastMCP, Client
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -174,29 +174,32 @@ def create_rest_bridge(
         logger.info(f"REST bridge call: {tool_name}({arguments})")
 
         try:
-            # Get the tool from FastMCP registry
-            tool = await mcp.get_tool(tool_name)
-            if not tool:
+            # Use FastMCP Client for in-memory tool invocation
+            async with Client(mcp) as client:
+                result = await client.call_tool(tool_name, arguments)
+
+            # Extract output from CallToolResult
+            if result.is_error:
+                error_text = result.content[0].text if result.content else "Unknown error"
                 return JSONResponse({
                     "status": "error",
                     "tool": tool_name,
-                    "error": f"Tool not found: {tool_name}"
-                }, status_code=404)
+                    "error": error_text
+                }, status_code=500)
 
-            # Call the tool's function with arguments
-            import inspect
-            if inspect.iscoroutinefunction(tool.fn):
-                result = await tool.fn(**arguments)
+            # Prefer structured data, fall back to content text
+            if result.data is not None:
+                output = result.data
+            elif result.content:
+                # Parse text content as JSON if possible
+                import json
+                text = result.content[0].text
+                try:
+                    output = json.loads(text)
+                except (json.JSONDecodeError, AttributeError):
+                    output = text
             else:
-                result = tool.fn(**arguments)
-
-            # Format the result
-            if isinstance(result, dict):
-                output = result
-            elif isinstance(result, (list, tuple)):
-                output = result
-            else:
-                output = str(result)
+                output = None
 
             return JSONResponse({
                 "status": "success",
@@ -204,21 +207,20 @@ def create_rest_bridge(
                 "output": output
             })
 
-        except TypeError as e:
-            # Likely a missing or invalid argument
-            logger.error(f"Tool call failed: {tool_name} - {e}")
-            return JSONResponse({
-                "status": "error",
-                "tool": tool_name,
-                "error": f"Invalid arguments: {e}"
-            }, status_code=400)
-
         except Exception as e:
+            error_msg = str(e)
+            if "Unknown tool" in error_msg or "not found" in error_msg.lower():
+                logger.warning(f"Tool not found: {tool_name}")
+                return JSONResponse({
+                    "status": "error",
+                    "tool": tool_name,
+                    "error": f"Tool not found: {tool_name}"
+                }, status_code=404)
             logger.error(f"Tool call failed: {tool_name} - {e}")
             return JSONResponse({
                 "status": "error",
                 "tool": tool_name,
-                "error": str(e)
+                "error": error_msg
             }, status_code=500)
 
     return api_call
