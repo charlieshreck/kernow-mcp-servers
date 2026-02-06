@@ -12,18 +12,18 @@ metadata:
 data:
   # Keep
   KEEP_URL: "http://keep.keep.svc.cluster.local:8080"
-  # Coroot
-  COROOT_URL: "http://coroot.monit.kernow.io"
+  # Coroot (monit cluster via NodePort - Cilium LB unreachable from agentic pods)
+  COROOT_URL: "http://coroot.monit.kernow.io:32077"
   COROOT_PROJECT: "all-clusters"
   # VictoriaMetrics
-  VICTORIA_METRICS_URL: "http://victoriametrics.monit.kernow.io"
+  VICTORIA_METRICS_URL: "http://victoriametrics.monit.kernow.io:32077"
   # AlertManager
-  ALERTMANAGER_URL: "http://alertmanager.monit.kernow.io"
+  ALERTMANAGER_URL: "http://alertmanager.monit.kernow.io:32077"
   # Grafana
-  GRAFANA_URL: "http://grafana.monit.kernow.io"
+  GRAFANA_URL: "http://grafana.monit.kernow.io:32077"
   GRAFANA_USER: "admin"
   # Gatus
-  GATUS_URL: "http://gatus.monit.kernow.io"
+  GATUS_URL: "http://gatus.monit.kernow.io:32077"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -46,7 +46,7 @@ spec:
         component: mcp
     spec:
       hostAliases:
-        - ip: "10.30.0.90"
+        - ip: "10.10.0.30"
           hostnames:
             - coroot.monit.kernow.io
             - grafana.monit.kernow.io
