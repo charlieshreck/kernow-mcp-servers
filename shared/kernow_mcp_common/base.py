@@ -178,6 +178,8 @@ def create_rest_bridge(
             async with Client(mcp) as client:
                 result = await client.call_tool(tool_name, arguments)
 
+            import json
+
             # Extract output from CallToolResult
             if result.is_error:
                 error_text = result.content[0].text if result.content else "Unknown error"
@@ -187,19 +189,28 @@ def create_rest_bridge(
                     "error": error_text
                 }, status_code=500)
 
-            # Prefer structured data, fall back to content text
-            if result.data is not None:
-                output = result.data
-            elif result.content:
-                # Parse text content as JSON if possible
-                import json
-                text = result.content[0].text
+            # Extract text from content blocks (always JSON-safe)
+            output = None
+            if result.content:
+                text = result.content[0].text if hasattr(result.content[0], 'text') else str(result.content[0])
                 try:
                     output = json.loads(text)
-                except (json.JSONDecodeError, AttributeError):
+                except (json.JSONDecodeError, ValueError):
                     output = text
-            else:
-                output = None
+            elif result.data is not None:
+                # Fallback to structured data with serialization safety
+                try:
+                    # Handle Pydantic models
+                    if hasattr(result.data, 'model_dump'):
+                        output = result.data.model_dump()
+                    elif hasattr(result.data, 'dict'):
+                        output = result.data.dict()
+                    else:
+                        # Test JSON serialization
+                        json.dumps(result.data)
+                        output = result.data
+                except (TypeError, ValueError):
+                    output = str(result.data)
 
             return JSONResponse({
                 "status": "success",
