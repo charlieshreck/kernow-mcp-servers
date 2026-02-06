@@ -136,6 +136,26 @@ async def adguard_get_rewrites() -> dict:
     return await call_mcp_tool("home", "adguard_list_rewrites")
 
 
+async def adguard_get_query_log(search: str = "", limit: int = 50) -> dict:
+    """Get DNS query log from home-mcp (AdGuard)."""
+    return await call_mcp_tool("home", "adguard_get_query_log", {"search": search, "limit": limit})
+
+
+async def adguard_get_stats() -> dict:
+    """Get AdGuard stats from home-mcp."""
+    return await call_mcp_tool("home", "adguard_get_stats")
+
+
+async def get_deployments(namespace: str, cluster: str = "prod") -> dict:
+    """Get deployments from infrastructure-mcp."""
+    return await call_mcp_tool("infrastructure", "kubectl_get_deployments", {"namespace": namespace, "cluster": cluster})
+
+
+async def get_ingresses(namespace: str) -> dict:
+    """Get ingresses from infrastructure-mcp."""
+    return await call_mcp_tool("infrastructure", "kubectl_get_ingresses", {"namespace": namespace})
+
+
 async def search_runbooks(query: str) -> dict:
     """Search runbooks from knowledge-mcp."""
     return await call_mcp_tool("knowledge", "search_runbooks", {"query": query})

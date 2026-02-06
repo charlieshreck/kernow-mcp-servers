@@ -12,6 +12,10 @@ from a2a_orchestrator.mcp_client import (
     query_metrics,
     coroot_get_anomalies,
     adguard_get_rewrites,
+    adguard_get_query_log,
+    adguard_get_stats,
+    get_deployments,
+    get_ingresses,
     search_runbooks,
     search_entities,
     call_mcp_tool,
@@ -39,12 +43,18 @@ class Finding:
 # DevOps Specialist - Kubernetes pods, deployments, resources
 # =============================================================================
 
-DEVOPS_PROMPT = """You are a DevOps specialist investigating a Kubernetes alert.
+DEVOPS_PROMPT = """You are a DevOps specialist investigating a Kubernetes alert in the Kernow homelab.
+
+INFRASTRUCTURE:
+- Clusters: prod (10.10.0.0/24 - apps, media), agentic (10.20.0.0/24 - AI platform), monit (10.30.0.0/24 - monitoring)
+- GitOps: ArgoCD on prod cluster only - don't suggest manual kubectl apply
+- Storage: TrueNAS (hdd for media, media pool for fast storage)
+- Common namespaces: default, media, ai-platform, monitoring
 
 Analyze the provided pod status, events, and logs to determine:
-1. What is the root cause?
+1. What is the root cause (OOM, crashloop, image pull, resource limits)?
 2. Is this actionable or a false positive?
-3. What is the recommended fix?
+3. What is the recommended fix (restart, scale, check storage, etc.)?
 
 Be concise. Focus on the actual issue, not general advice.
 Output JSON with: status (PASS/WARN/FAIL), issue, recommendation
@@ -121,12 +131,18 @@ async def devops_investigate(alert) -> Finding:
 # Network Specialist - DNS, routing, connectivity
 # =============================================================================
 
-NETWORK_PROMPT = """You are a Network specialist investigating a connectivity/DNS alert.
+NETWORK_PROMPT = """You are a Network specialist investigating a connectivity/DNS alert in the Kernow homelab.
 
-Analyze the provided DNS records, routing info, and network state to determine:
-1. Is there a DNS misconfiguration?
-2. Is a service unreachable?
-3. What is the recommended fix?
+INFRASTRUCTURE KNOWLEDGE:
+- Networks: prod (10.10.0.0/24), agentic (10.20.0.0/24), monit (10.30.0.0/24)
+- DNS: AdGuard (10.10.0.1:53) -> Unbound -> Internet
+- Split-DNS: AdGuard rewrites for specific domains -> Caddy; *.kernow.io wildcard in Unbound -> Traefik (10.10.0.90)
+- Key IPs: OPNsense/AdGuard/Caddy (10.10.0.1), Prod LB (10.10.0.90), Agentic LB (10.20.0.90)
+
+Analyze the provided DNS records, query logs, and network state to determine:
+1. Is there a DNS misconfiguration (missing rewrite, wrong IP)?
+2. Is a service unreachable (ingress, deployment issue)?
+3. Is this a split-DNS routing problem?
 
 Be concise. Focus on the actual issue.
 Output JSON with: status (PASS/WARN/FAIL), issue, recommendation
@@ -140,25 +156,60 @@ async def network_investigate(alert) -> Finding:
 
     try:
         evidence_parts = []
-
-        # Check if DNS-related
-        if any(x in alert.name.lower() for x in ["dns", "resolve", "lookup"]):
-            rewrites = await adguard_get_rewrites()
-            tools_used.append("adguard_list_rewrites")
-            if rewrites.get("status") == "success":
-                evidence_parts.append(f"DNS Rewrites:\n{rewrites.get('output', '')[:500]}")
-
-        # Check for service-related issues
+        namespace = alert.labels.namespace or "default"
         service = alert.labels.service
+
+        # Always gather DNS context for network issues
+        # Check rewrites for the service/namespace
+        rewrites = await adguard_get_rewrites()
+        tools_used.append("adguard_list_rewrites")
+        if rewrites.get("status") == "success":
+            output = rewrites.get("output", "")
+            # Filter to relevant rewrites if we have a service name
+            if service:
+                lines = [l for l in output.split('\n') if service.lower() in l.lower() or namespace.lower() in l.lower()]
+                if lines:
+                    evidence_parts.append(f"Relevant DNS Rewrites:\n" + '\n'.join(lines[:10]))
+                else:
+                    evidence_parts.append(f"No DNS rewrite found for {service} (may use *.kernow.io wildcard)")
+            else:
+                evidence_parts.append(f"DNS Rewrites (sample):\n{output[:400]}")
+
+        # Check recent DNS queries if connectivity issue
+        if any(x in alert.name.lower() for x in ["dns", "resolve", "unreachable", "timeout", "connection"]):
+            search_term = service or namespace
+            query_log = await adguard_get_query_log(search=search_term, limit=20)
+            tools_used.append("adguard_get_query_log")
+            if query_log.get("status") == "success":
+                evidence_parts.append(f"Recent DNS queries for {search_term}:\n{query_log.get('output', '')[:400]}")
+
+        # Check service/ingress if we have a service name
         if service:
-            # Query service endpoints
+            # Get service endpoints
             svc_result = await call_mcp_tool(
                 "infrastructure", "kubectl_get_services",
-                {"namespace": alert.labels.namespace or "default", "name": service}
+                {"namespace": namespace, "name": service}
             )
             tools_used.append("kubectl_get_services")
             if svc_result.get("status") == "success":
-                evidence_parts.append(f"Service:\n{svc_result.get('output', '')[:500]}")
+                evidence_parts.append(f"Service:\n{svc_result.get('output', '')[:400]}")
+
+            # Get ingress for this namespace
+            ingress_result = await get_ingresses(namespace)
+            tools_used.append("kubectl_get_ingresses")
+            if ingress_result.get("status") == "success":
+                evidence_parts.append(f"Ingresses:\n{ingress_result.get('output', '')[:400]}")
+
+        # Check deployments for the service
+        if service:
+            deploy_result = await get_deployments(namespace)
+            tools_used.append("kubectl_get_deployments")
+            if deploy_result.get("status") == "success":
+                output = deploy_result.get("output", "")
+                # Filter to relevant deployment
+                lines = [l for l in output.split('\n') if service.lower() in l.lower()]
+                if lines:
+                    evidence_parts.append(f"Deployment status:\n" + '\n'.join(lines[:5]))
 
         evidence = "\n\n".join(evidence_parts) if evidence_parts else "No network data available"
 
@@ -174,7 +225,7 @@ async def network_investigate(alert) -> Finding:
             agent="network",
             status=analysis.get("status", "PASS"),
             issue=analysis.get("issue"),
-            evidence=evidence[:1000],
+            evidence=evidence[:1500],
             recommendation=analysis.get("recommendation"),
             tools_used=tools_used,
             latency_ms=latency_ms
@@ -269,7 +320,14 @@ async def security_investigate(alert) -> Finding:
 # SRE Specialist - Metrics, latency, anomalies
 # =============================================================================
 
-SRE_PROMPT = """You are an SRE specialist investigating a performance/availability alert.
+SRE_PROMPT = """You are an SRE specialist investigating a performance/availability alert in the Kernow homelab.
+
+MONITORING STACK:
+- VictoriaMetrics: metrics storage (PromQL compatible) at monit cluster
+- AlertManager: alert routing, deduplication
+- Coroot: service dependency mapping, anomaly detection
+- Gatus: endpoint health checks
+- Grafana: dashboards
 
 Analyze the provided metrics and anomalies to determine:
 1. What is causing the latency/error rate?
