@@ -173,14 +173,44 @@ def create_rest_bridge(
 
         logger.info(f"REST bridge call: {tool_name}({arguments})")
 
+        import json
+
+        async def _call_tool(client, name, args):
+            """Call tool, auto-wrapping in params if needed for Pydantic model tools."""
+            try:
+                return await client.call_tool(name, args)
+            except Exception as e:
+                err = str(e)
+                # If tool expects a Pydantic model param, wrap and retry
+                if "params" in err and "missing" in err.lower() and "params" not in args:
+                    logger.debug(f"Retrying {name} with params wrapper")
+                    return await client.call_tool(name, {"params": args})
+                raise
+
+        def _extract_output(result):
+            """Extract JSON-safe output from CallToolResult."""
+            if result.content:
+                text = result.content[0].text if hasattr(result.content[0], 'text') else str(result.content[0])
+                try:
+                    return json.loads(text)
+                except (json.JSONDecodeError, ValueError):
+                    return text
+            if result.data is not None:
+                if hasattr(result.data, 'model_dump'):
+                    return result.data.model_dump()
+                if hasattr(result.data, 'dict'):
+                    return result.data.dict()
+                try:
+                    json.dumps(result.data)
+                    return result.data
+                except (TypeError, ValueError):
+                    return str(result.data)
+            return None
+
         try:
-            # Use FastMCP Client for in-memory tool invocation
             async with Client(mcp) as client:
-                result = await client.call_tool(tool_name, arguments)
+                result = await _call_tool(client, tool_name, arguments)
 
-            import json
-
-            # Extract output from CallToolResult
             if result.is_error:
                 error_text = result.content[0].text if result.content else "Unknown error"
                 return JSONResponse({
@@ -189,33 +219,10 @@ def create_rest_bridge(
                     "error": error_text
                 }, status_code=500)
 
-            # Extract text from content blocks (always JSON-safe)
-            output = None
-            if result.content:
-                text = result.content[0].text if hasattr(result.content[0], 'text') else str(result.content[0])
-                try:
-                    output = json.loads(text)
-                except (json.JSONDecodeError, ValueError):
-                    output = text
-            elif result.data is not None:
-                # Fallback to structured data with serialization safety
-                try:
-                    # Handle Pydantic models
-                    if hasattr(result.data, 'model_dump'):
-                        output = result.data.model_dump()
-                    elif hasattr(result.data, 'dict'):
-                        output = result.data.dict()
-                    else:
-                        # Test JSON serialization
-                        json.dumps(result.data)
-                        output = result.data
-                except (TypeError, ValueError):
-                    output = str(result.data)
-
             return JSONResponse({
                 "status": "success",
                 "tool": tool_name,
-                "output": output
+                "output": _extract_output(result)
             })
 
         except Exception as e:
