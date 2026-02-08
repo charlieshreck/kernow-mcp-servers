@@ -221,13 +221,74 @@ metadata:
   namespace: ai-platform
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: infrastructure-mcp
+rules:
+  # Read-only access to core resources
+  - apiGroups: [""]
+    resources:
+      - pods
+      - services
+      - configmaps
+      - secrets
+      - persistentvolumeclaims
+      - nodes
+      - namespaces
+      - events
+    verbs: ["get", "list", "watch"]
+  # Read-only access to apps resources
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+      - daemonsets
+      - replicasets
+    verbs: ["get", "list", "watch"]
+  # Read-only access to batch resources
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: ["get", "list", "watch"]
+  # Read-only access to networking resources
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingresses
+    verbs: ["get", "list", "watch"]
+  # Pod logs
+  - apiGroups: [""]
+    resources:
+      - pods/log
+    verbs: ["get"]
+  # Delete pods (for restart)
+  - apiGroups: [""]
+    resources:
+      - pods
+    verbs: ["delete"]
+  # Patch deployments (rollout restart via annotation) and scale
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+    verbs: ["patch"]
+  - apiGroups: ["apps"]
+    resources:
+      - deployments/scale
+    verbs: ["get", "patch"]
+  # Create jobs (for create-job-from-cronjob)
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: infrastructure-mcp-admin
+  name: infrastructure-mcp
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: cluster-admin
+  name: infrastructure-mcp
 subjects:
   - kind: ServiceAccount
     name: infrastructure-mcp
@@ -244,6 +305,10 @@ metadata:
     component: mcp
 spec:
   ingressClassName: traefik
+  tls:
+    - hosts:
+        - infrastructure-mcp.agentic.kernow.io
+      secretName: kernow-io-tls
   rules:
     - host: infrastructure-mcp.agentic.kernow.io
       http:

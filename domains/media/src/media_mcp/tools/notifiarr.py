@@ -18,7 +18,13 @@ async def notifiarr_request(endpoint: str, method: str = "GET", data: dict = Non
         url = f"{NOTIFIARR_URL}/{endpoint.lstrip('/')}"
         response = await client.request(method, url, json=data)
         response.raise_for_status()
-        return response.json() if response.content else {}
+        if not response.content:
+            return {}
+        content_type = response.headers.get("content-type", "")
+        if "application/json" in content_type:
+            return response.json()
+        # Notifiarr Client may return HTML or plain text for some endpoints
+        return {"text": response.text.strip()}
 
 
 async def get_status() -> dict:

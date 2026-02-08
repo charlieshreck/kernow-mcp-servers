@@ -68,7 +68,7 @@ def register_tools(mcp: FastMCP):
 
     @mcp.tool()
     async def radarr_add_movie(tmdb_id: int, quality_profile_id: int = 1,
-                                root_folder_path: str = "/movies") -> dict:
+                                root_folder_path: str = "/film") -> dict:
         """Add a movie to Radarr by TMDB ID."""
         try:
             lookup = await arr_request(f"movie/lookup/tmdb?tmdbId={tmdb_id}")

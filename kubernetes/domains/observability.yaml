@@ -12,18 +12,18 @@ metadata:
 data:
   # Keep
   KEEP_URL: "http://keep.keep.svc.cluster.local:8080"
-  # Coroot (monit cluster via NodePort - Cilium LB unreachable from agentic pods)
-  COROOT_URL: "http://coroot.monit.kernow.io:32077"
+  # Coroot (monit cluster via Traefik ingress)
+  COROOT_URL: "http://coroot.monit.kernow.io"
   COROOT_PROJECT: "all-clusters"
   # VictoriaMetrics
-  VICTORIA_METRICS_URL: "http://victoriametrics.monit.kernow.io:32077"
+  VICTORIA_METRICS_URL: "http://victoriametrics.monit.kernow.io"
   # AlertManager
-  ALERTMANAGER_URL: "http://alertmanager.monit.kernow.io:32077"
+  ALERTMANAGER_URL: "http://alertmanager.monit.kernow.io"
   # Grafana
-  GRAFANA_URL: "http://grafana.monit.kernow.io:32077"
+  GRAFANA_URL: "http://grafana.monit.kernow.io"
   GRAFANA_USER: "admin"
   # Gatus
-  GATUS_URL: "http://gatus.monit.kernow.io:32077"
+  GATUS_URL: "http://gatus.monit.kernow.io"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -46,7 +46,7 @@ spec:
         component: mcp
     spec:
       hostAliases:
-        - ip: "10.10.0.30"
+        - ip: "10.10.0.31"
           hostnames:
             - coroot.monit.kernow.io
             - grafana.monit.kernow.io
@@ -130,6 +130,10 @@ metadata:
     component: mcp
 spec:
   ingressClassName: traefik
+  tls:
+    - hosts:
+        - observability-mcp.agentic.kernow.io
+      secretName: kernow-io-tls
   rules:
     - host: observability-mcp.agentic.kernow.io
       http:

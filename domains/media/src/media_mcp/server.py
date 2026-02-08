@@ -69,91 +69,104 @@ async def check_components() -> dict:
     try:
         status = await plex.get_server_status()
         components["plex"] = "error" not in status
-    except:
+    except Exception as e:
+        logger.warning(f"Plex health check failed: {e}")
         components["plex"] = False
 
     # Sonarr
     try:
         status = await sonarr.get_system_status()
         components["sonarr"] = "error" not in status
-    except:
+    except Exception as e:
+        logger.warning(f"Sonarr health check failed: {e}")
         components["sonarr"] = False
 
     # Radarr
     try:
         status = await radarr.get_system_status()
         components["radarr"] = "error" not in status
-    except:
+    except Exception as e:
+        logger.warning(f"Radarr health check failed: {e}")
         components["radarr"] = False
 
     # Prowlarr
     try:
         health = await prowlarr.get_health()
         components["prowlarr"] = isinstance(health, list)
-    except:
+    except Exception as e:
+        logger.warning(f"Prowlarr health check failed: {e}")
         components["prowlarr"] = False
 
     # Overseerr
     try:
         status = await overseerr.get_status()
         components["overseerr"] = "error" not in status
-    except:
+    except Exception as e:
+        logger.warning(f"Overseerr health check failed: {e}")
         components["overseerr"] = False
 
     # Tautulli
     try:
         activity = await tautulli.get_activity()
         components["tautulli"] = "error" not in activity
-    except:
+    except Exception as e:
+        logger.warning(f"Tautulli health check failed: {e}")
         components["tautulli"] = False
 
     # Transmission
     try:
         torrents = await transmission.list_torrents()
         components["transmission"] = not (torrents and "error" in torrents[0])
-    except:
+    except Exception as e:
+        logger.warning(f"Transmission health check failed: {e}")
         components["transmission"] = False
 
     # SABnzbd
     try:
         queue = await sabnzbd.get_queue()
         components["sabnzbd"] = "error" not in queue
-    except:
+    except Exception as e:
+        logger.warning(f"SABnzbd health check failed: {e}")
         components["sabnzbd"] = False
 
     # Huntarr
     try:
         status = await huntarr.get_status()
         components["huntarr"] = "error" not in status
-    except:
+    except Exception as e:
+        logger.warning(f"Huntarr health check failed: {e}")
         components["huntarr"] = False
 
     # Cleanuparr
     try:
         status = await cleanuparr.get_status()
         components["cleanuparr"] = "error" not in status
-    except:
+    except Exception as e:
+        logger.warning(f"Cleanuparr health check failed: {e}")
         components["cleanuparr"] = False
 
     # Maintainerr
     try:
         status = await maintainerr.get_status()
         components["maintainerr"] = "error" not in status
-    except:
+    except Exception as e:
+        logger.warning(f"Maintainerr health check failed: {e}")
         components["maintainerr"] = False
 
     # Notifiarr
     try:
         status = await notifiarr.get_status()
         components["notifiarr"] = "error" not in status
-    except:
+    except Exception as e:
+        logger.warning(f"Notifiarr health check failed: {e}")
         components["notifiarr"] = False
 
     # Recommendarr
     try:
         status = await recommendarr.get_status()
         components["recommendarr"] = "error" not in status
-    except:
+    except Exception as e:
+        logger.warning(f"Recommendarr health check failed: {e}")
         components["recommendarr"] = False
 
     return components
@@ -195,10 +208,14 @@ def main():
 
     logger.info(f"Starting media-mcp on {host}:{port}")
 
+    # Import REST bridge for A2A access
+    from kernow_mcp_common.base import create_rest_bridge
+
     # REST routes
     routes = [
         Route("/health", health_endpoint, methods=["GET"]),
         Route("/ready", ready_endpoint, methods=["GET"]),
+        Route("/api/call", create_rest_bridge(mcp, "media-mcp"), methods=["POST"]),
     ]
 
     # Get MCP ASGI app

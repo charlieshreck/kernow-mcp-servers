@@ -19,7 +19,13 @@ async def maintainerr_request(endpoint: str, method: str = "GET", data: dict = N
         url = f"{MAINTAINERR_URL}/api/{endpoint.lstrip('/')}"
         response = await client.request(method, url, json=data)
         response.raise_for_status()
-        return response.json() if response.content else {}
+        if not response.content:
+            return {}
+        content_type = response.headers.get("content-type", "")
+        if "application/json" in content_type:
+            return response.json()
+        # Some Maintainerr endpoints return plain text (e.g., version)
+        return {"text": response.text.strip()}
 
 
 async def get_status() -> dict:

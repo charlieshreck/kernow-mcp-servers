@@ -1,6 +1,7 @@
 """Infisical secrets helper for MCP servers."""
 
 import os
+import time
 import logging
 from typing import Optional, Dict, Any
 
@@ -16,13 +17,15 @@ INFISICAL_WORKSPACE_ID = os.environ.get("INFISICAL_WORKSPACE_ID", "")
 INFISICAL_ENVIRONMENT = os.environ.get("INFISICAL_ENVIRONMENT", "prod")
 
 _access_token: Optional[str] = None
+_token_expiry: float = 0.0
+_TOKEN_TTL_SECONDS = 3600  # 1 hour
 
 
 async def _get_access_token() -> str:
     """Get or refresh access token using Machine Identity."""
-    global _access_token
+    global _access_token, _token_expiry
 
-    if _access_token:
+    if _access_token and time.monotonic() < _token_expiry:
         return _access_token
 
     if not INFISICAL_CLIENT_ID or not INFISICAL_CLIENT_SECRET:
@@ -39,6 +42,8 @@ async def _get_access_token() -> str:
         response.raise_for_status()
         data = response.json()
         _access_token = data["accessToken"]
+        _token_expiry = time.monotonic() + _TOKEN_TTL_SECONDS
+        logger.debug("Infisical token refreshed, expires in %d seconds", _TOKEN_TTL_SECONDS)
         return _access_token
 
 
@@ -68,6 +73,22 @@ async def get_secret(path: str, key: str) -> Optional[str]:
 
             if response.status_code == 404:
                 return None
+
+            if response.status_code == 401:
+                logger.warning("Infisical token expired (401), refreshing")
+                clear_token_cache()
+                token = await _get_access_token()
+                response = await client.get(
+                    f"{INFISICAL_URL}/api/v3/secrets/raw/{key}",
+                    headers={"Authorization": f"Bearer {token}"},
+                    params={
+                        "workspaceId": INFISICAL_WORKSPACE_ID,
+                        "environment": INFISICAL_ENVIRONMENT,
+                        "secretPath": path
+                    }
+                )
+                if response.status_code == 404:
+                    return None
 
             response.raise_for_status()
             data = response.json()
@@ -100,6 +121,21 @@ async def list_secrets(path: str = "/") -> Dict[str, Any]:
                     "secretPath": path
                 }
             )
+
+            if response.status_code == 401:
+                logger.warning("Infisical token expired (401), refreshing")
+                clear_token_cache()
+                token = await _get_access_token()
+                response = await client.get(
+                    f"{INFISICAL_URL}/api/v3/secrets/raw",
+                    headers={"Authorization": f"Bearer {token}"},
+                    params={
+                        "workspaceId": INFISICAL_WORKSPACE_ID,
+                        "environment": INFISICAL_ENVIRONMENT,
+                        "secretPath": path
+                    }
+                )
+
             response.raise_for_status()
             data = response.json()
 
@@ -119,5 +155,6 @@ async def list_secrets(path: str = "/") -> Dict[str, Any]:
 
 def clear_token_cache():
     """Clear the cached access token (useful for testing or token refresh)."""
-    global _access_token
+    global _access_token, _token_expiry
     _access_token = None
+    _token_expiry = 0.0

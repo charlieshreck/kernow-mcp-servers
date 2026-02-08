@@ -133,6 +133,10 @@ metadata:
     component: mcp
 spec:
   ingressClassName: traefik
+  tls:
+    - hosts:
+        - external-mcp.agentic.kernow.io
+      secretName: kernow-io-tls
   rules:
     - host: external-mcp.agentic.kernow.io
       http:
