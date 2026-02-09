@@ -30,34 +30,59 @@ SSL_CONTEXT = _get_ssl_context()
 
 
 class UniFiSession:
-    """Session manager for operations requiring CSRF token."""
+    """Persistent session manager with cookie-based auth."""
 
     def __init__(self):
-        self.cookies = {}
-        self.csrf_token = None
+        self._client: Optional[httpx.AsyncClient] = None
+        self._logged_in = False
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create persistent client with cookie jar."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(verify=SSL_CONTEXT, timeout=30.0)
+            self._logged_in = False
+        return self._client
 
     async def login(self) -> bool:
-        """Login with username/password to get session cookies and CSRF token."""
+        """Login with username/password using persistent client."""
         if not UNIFI_USER or not UNIFI_PASSWORD:
             return False
         try:
-            async with httpx.AsyncClient(verify=SSL_CONTEXT, timeout=30.0) as client:
-                response = await client.post(
-                    f"{UNIFI_HOST}/api/auth/login",
-                    json={"username": UNIFI_USER, "password": UNIFI_PASSWORD}
-                )
-                response.raise_for_status()
-                self.cookies = {k: v for k, v in response.cookies.items()}
-                self.csrf_token = response.headers.get("X-CSRF-Token", "")
-                return True
+            client = await self._get_client()
+            response = await client.post(
+                f"{UNIFI_HOST}/api/auth/login",
+                json={"username": UNIFI_USER, "password": UNIFI_PASSWORD}
+            )
+            response.raise_for_status()
+            csrf = response.headers.get("X-CSRF-Token", "")
+            if csrf:
+                client.headers["X-CSRF-Token"] = csrf
+            self._logged_in = True
+            logger.info("UniFi session login successful")
+            return True
         except Exception as e:
             logger.error(f"Session login failed: {e}")
+            self._logged_in = False
             return False
 
     async def ensure_session(self) -> bool:
-        if not self.cookies or not self.csrf_token:
+        if not self._logged_in:
             return await self.login()
         return True
+
+    async def request(self, method: str, url: str, **kwargs) -> httpx.Response:
+        """Make authenticated request, re-login on 401."""
+        client = await self._get_client()
+        response = await client.request(method, url, **kwargs)
+        if response.status_code == 401 and self._logged_in:
+            self._logged_in = False
+            if await self.login():
+                response = await client.request(method, url, **kwargs)
+        return response
+
+    async def close(self):
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
 
 
 SESSION = UniFiSession()
@@ -66,33 +91,28 @@ SESSION = UniFiSession()
 async def unifi_api(endpoint: str, method: str = "GET", data: dict = None,
                     require_session: bool = True) -> Any:
     """Make request to UniFi API."""
-    async with httpx.AsyncClient(verify=SSL_CONTEXT, timeout=30.0) as client:
-        headers = {}
-        cookies = {}
+    url = f"{UNIFI_HOST}/proxy/network/api/s/{UNIFI_SITE}/{endpoint}"
 
-        if UNIFI_API_KEY:
-            headers["X-API-KEY"] = UNIFI_API_KEY
-        elif require_session and UNIFI_USER and UNIFI_PASSWORD:
-            if await SESSION.ensure_session():
-                cookies = SESSION.cookies
-                if SESSION.csrf_token:
-                    headers["X-CSRF-Token"] = SESSION.csrf_token
+    if UNIFI_API_KEY:
+        async with httpx.AsyncClient(verify=SSL_CONTEXT, timeout=30.0) as client:
+            headers = {"X-API-KEY": UNIFI_API_KEY}
+            response = await client.request(method, url, headers=headers,
+                                            json=data if method != "GET" else None)
+            response.raise_for_status()
+            result = response.json()
+            return result.get("data", result)
 
-        url = f"{UNIFI_HOST}/proxy/network/api/s/{UNIFI_SITE}/{endpoint}"
-        if method == "GET":
-            response = await client.get(url, headers=headers, cookies=cookies)
-        elif method == "POST":
-            response = await client.post(url, headers=headers, cookies=cookies, json=data)
-        elif method == "PUT":
-            response = await client.put(url, headers=headers, cookies=cookies, json=data)
-        elif method == "DELETE":
-            response = await client.delete(url, headers=headers, cookies=cookies)
-        else:
-            return {"error": f"Unsupported method: {method}"}
-
+    if require_session and UNIFI_USER and UNIFI_PASSWORD:
+        await SESSION.ensure_session()
+        kwargs = {}
+        if data and method != "GET":
+            kwargs["json"] = data
+        response = await SESSION.request(method, url, **kwargs)
         response.raise_for_status()
         result = response.json()
         return result.get("data", result)
+
+    return {"error": "No authentication configured"}
 
 
 async def get_status() -> dict:
