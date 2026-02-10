@@ -169,16 +169,17 @@ def register_tools(mcp: FastMCP):
         """Get Layer-7 application protocol stats for an interface (e.g. TLS, DNS, YouTube)."""
         try:
             ifid = IFACE_MAP.get(interface, 0)
-            data = await _api("get/interface/l7/stats.lua", {"ifid": ifid})
+            data = await _api("get/interface/l7/stats.lua", {"ifid": ifid, "ndpistats_mode": "sinceStartup"})
             name = IFACE_NAMES.get(ifid, interface)
             lines = [f"# L7 Application Stats — {name}", ""]
-            if isinstance(data, dict):
-                sorted_apps = sorted(data.items(), key=lambda x: x[1].get("bytes", 0) if isinstance(x[1], dict) else x[1], reverse=True)
+            labels = data.get("labels", []) if isinstance(data, dict) else []
+            series = data.get("series", []) if isinstance(data, dict) else []
+            if labels and series:
+                total = sum(series)
                 lines.append("| Application | Bytes | % |")
                 lines.append("|-------------|-------|---|")
-                total = sum(v.get("bytes", 0) if isinstance(v, dict) else v for _, v in sorted_apps)
-                for app, val in sorted_apps[:25]:
-                    b = val.get("bytes", 0) if isinstance(val, dict) else val
+                paired = sorted(zip(labels, series), key=lambda x: x[1], reverse=True)
+                for app, b in paired:
                     pct = (b / total * 100) if total > 0 else 0
                     lines.append(f"| {app} | {_fmt_bytes(b)} | {pct:.1f}% |")
             return "\n".join(lines)
@@ -207,82 +208,75 @@ def register_tools(mcp: FastMCP):
             return f"Error: {e}"
 
     @mcp.tool(name="ntopng_get_alerts")
-    async def ntopng_get_alerts(alert_type: str = "all", limit: int = 20) -> str:
-        """Get ntopng alerts. Types: all, flow, host, interface, network, system."""
+    async def ntopng_get_alerts(alert_type: str = "flow", interface: str = "igc3", limit: int = 20) -> str:
+        """Get ntopng alerts. Types: flow, host, interface, network, system. Default: flow alerts on LAN."""
         try:
+            ifid = IFACE_MAP.get(interface, 1)
             endpoint = f"get/{alert_type}/alert/list.lua"
-            data = await _api(endpoint, {"ifid": 0, "currentPage": 1, "perPage": limit, "status": "historical"})
-            alerts = data.get("data", data) if isinstance(data, dict) else data
-            lines = [f"# ntopng Alerts ({alert_type})", ""]
-            if not alerts:
-                return "No alerts found."
-            if isinstance(alerts, list):
-                for a in alerts[:limit]:
-                    severity = a.get("severity", {}).get("label", "?")
-                    msg = a.get("msg", {}).get("value", str(a.get("msg", "?")))
-                    ts = a.get("tstamp", {}).get("value", "?")
-                    lines.append(f"- [{severity}] {msg} (at {ts})")
+            data = await _api(endpoint, {"ifid": ifid, "currentPage": 1, "perPage": limit, "status": "historical"})
+            records = data.get("records", []) if isinstance(data, dict) else data
+            lines = [f"# ntopng {alert_type.title()} Alerts — {IFACE_NAMES.get(ifid, interface)}", ""]
+            if not records:
+                return f"No {alert_type} alerts found."
+            for a in records[:limit]:
+                severity = a.get("severity", {}).get("label", "?")
+                alert_name = a.get("alert_id", {}).get("label", "?")
+                ts = a.get("tstamp", {}).get("value", "?")
+                flow = a.get("flow", {})
+                cli = flow.get("cli_ip", {}).get("label_long", "?")
+                srv = flow.get("srv_ip", {}).get("label_long", "?")
+                proto = a.get("l7_proto", {}).get("label", "")
+                lines.append(f"- [{severity}] **{alert_name}**: {cli} → {srv} {proto} (at {ts})")
             return "\n".join(lines)
         except Exception as e:
             return f"Error: {e}"
 
     @mcp.tool(name="ntopng_get_alert_stats")
-    async def ntopng_get_alert_stats() -> str:
-        """Get alert severity and type counters summary."""
+    async def ntopng_get_alert_stats(interface: str = "igc3") -> str:
+        """Get alert severity and type counters summary for an interface."""
         try:
-            severity = await _api("get/alert/severity/counters.lua", {"ifid": 0, "status": "historical"})
-            types = await _api("get/alert/type/counters.lua", {"ifid": 0, "status": "historical"})
-            lines = ["# ntopng Alert Statistics", ""]
+            ifid = IFACE_MAP.get(interface, 1)
+            severity = await _api("get/alert/severity/counters.lua", {"ifid": ifid, "status": "historical"})
+            types = await _api("get/alert/type/counters.lua", {"ifid": ifid, "status": "historical"})
+            name = IFACE_NAMES.get(ifid, interface)
+            lines = [f"# ntopng Alert Statistics — {name}", ""]
             lines.append("## By Severity")
-            if isinstance(severity, dict):
-                for s, count in sorted(severity.items(), key=lambda x: x[1], reverse=True):
-                    lines.append(f"- {s}: {count}")
-            elif isinstance(severity, list):
-                for item in severity:
-                    lines.append(f"- {item.get('label', '?')}: {item.get('count', 0)}")
+            if isinstance(severity, list):
+                for item in sorted(severity, key=lambda x: x.get("count", 0), reverse=True):
+                    entity = item.get("entity_label", "")
+                    sev = item.get("name", "?")
+                    count = item.get("count", 0)
+                    lines.append(f"- {sev} ({entity}): {count:,}")
             lines.append("")
             lines.append("## By Type")
-            if isinstance(types, dict):
-                for t, count in sorted(types.items(), key=lambda x: x[1], reverse=True)[:15]:
-                    lines.append(f"- {t}: {count}")
-            elif isinstance(types, list):
-                for item in types[:15]:
-                    lines.append(f"- {item.get('label', '?')}: {item.get('count', 0)}")
+            if isinstance(types, list):
+                for item in sorted(types, key=lambda x: x.get("count", 0), reverse=True)[:15]:
+                    lines.append(f"- {item.get('name', '?')}: {item.get('count', 0):,}")
             return "\n".join(lines)
         except Exception as e:
             return f"Error: {e}"
 
     @mcp.tool(name="ntopng_get_system_health")
     async def ntopng_get_system_health() -> str:
-        """Get ntopng system health including Redis, CPU, memory stats."""
+        """Get ntopng system health including Redis stats and interface summary."""
         try:
-            status = await _api("get/system/status.lua")
             health = await _api("get/system/health/redis.lua")
-            iface_health = await _api("get/system/health/interfaces.lua")
             lines = ["# ntopng System Health", ""]
-            if isinstance(status, dict):
-                lines.append(f"- **Version**: {status.get('version', 'N/A')}")
-                lines.append(f"- **Platform**: {status.get('platform', 'N/A')}")
-                lines.append(f"- **Uptime**: {status.get('uptime', 'N/A')}")
-                lines.append(f"- **CPU load**: {status.get('cpu_load', 'N/A')}")
-                lines.append(f"- **Memory**: {status.get('mem_total', 'N/A')} total, {status.get('mem_used', 'N/A')} used")
-            lines.append("")
             lines.append("## Redis")
             if isinstance(health, dict):
-                lines.append(f"- Memory: {health.get('used_memory_human', 'N/A')}")
+                lines.append(f"- Memory: {_fmt_bytes(health.get('memory', 0))}")
                 lines.append(f"- Keys: {health.get('dbsize', 'N/A')}")
                 lines.append(f"- Health: {health.get('health', 'N/A')}")
             lines.append("")
             lines.append("## Interfaces")
-            if isinstance(iface_health, list):
-                for i in iface_health:
-                    name = IFACE_NAMES.get(i.get("ifid"), i.get("ifname", "?"))
-                    lines.append(f"- {name}: {i.get('num_hosts', 0)} hosts, {i.get('num_flows', 0)} flows")
-            elif isinstance(iface_health, dict):
-                for ifid, info in iface_health.items():
-                    if isinstance(info, dict):
-                        name = IFACE_NAMES.get(int(ifid) if ifid.isdigit() else ifid, ifid)
-                        lines.append(f"- {name}: {info.get('num_hosts', 0)} hosts, {info.get('num_flows', 0)} flows")
+            ifaces = await _api("get/ntopng/interfaces.lua")
+            for iface in ifaces:
+                ifid = iface["ifid"]
+                name = IFACE_NAMES.get(ifid, iface["ifname"])
+                data = await _api("get/interface/data.lua", {"ifid": ifid})
+                drops = data.get("drops", 0)
+                tot_drops = data.get("tot_pkt_drops", 0)
+                lines.append(f"- {name}: {data.get('num_hosts', 0)} hosts, {data.get('num_flows', 0)} flows, drops={drops:,} ({tot_drops:,} total)")
             return "\n".join(lines)
         except Exception as e:
             return f"Error: {e}"
