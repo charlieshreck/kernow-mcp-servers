@@ -100,22 +100,25 @@ def register_tools(mcp: FastMCP):
         namespace: str = "default",
         tail_lines: int = 100,
         container: Optional[str] = None,
-        previous: bool = False
+        previous: bool = False,
+        cluster: str = "agentic"
     ) -> str:
-        """Get logs from a Kubernetes pod. Use previous=True for crashed container logs."""
+        """Get logs from a Kubernetes pod. Use previous=True for crashed container logs.
+        cluster: agentic (default), prod, or monit."""
         args = ["logs", pod_name, "-n", namespace, f"--tail={tail_lines}"]
         if container:
             args.extend(["-c", container])
         if previous:
             args.append("--previous")
 
-        stdout, stderr, rc = run_kubectl(args)
+        stdout, stderr, rc = run_kubectl(args, cluster=cluster)
         return stdout if rc == 0 else f"Error: {stderr}"
 
     @mcp.tool()
-    async def kubectl_delete_pod(pod_name: str, namespace: str = "default") -> str:
-        """Delete a pod (useful for forcing restart of a specific pod)."""
-        stdout, stderr, rc = run_kubectl(["delete", "pod", pod_name, "-n", namespace])
+    async def kubectl_delete_pod(pod_name: str, namespace: str = "default", cluster: str = "agentic") -> str:
+        """Delete a pod (useful for forcing restart of a specific pod).
+        cluster: agentic (default), prod, or monit."""
+        stdout, stderr, rc = run_kubectl(["delete", "pod", pod_name, "-n", namespace], cluster=cluster)
         return f"Deleted pod {pod_name}" if rc == 0 else f"Error: {stderr}"
 
     # =========================================================================
@@ -277,16 +280,18 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     async def kubectl_get_jobs(
         namespace: str = "default",
-        all_namespaces: bool = False
+        all_namespaces: bool = False,
+        cluster: str = "agentic"
     ) -> List[dict]:
-        """Get jobs with completion status."""
+        """Get jobs with completion status.
+        cluster: agentic (default), prod, or monit."""
         args = ["get", "jobs", "-o", "json"]
         if all_namespaces:
             args.append("-A")
         else:
             args.extend(["-n", namespace])
 
-        stdout, stderr, rc = run_kubectl(args)
+        stdout, stderr, rc = run_kubectl(args, cluster=cluster)
         if rc != 0:
             return [{"error": stderr}]
 
@@ -303,16 +308,18 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     async def kubectl_get_cronjobs(
         namespace: str = "default",
-        all_namespaces: bool = False
+        all_namespaces: bool = False,
+        cluster: str = "agentic"
     ) -> List[dict]:
-        """Get cronjobs with schedule and last run info."""
+        """Get cronjobs with schedule and last run info.
+        cluster: agentic (default), prod, or monit."""
         args = ["get", "cronjobs", "-o", "json"]
         if all_namespaces:
             args.append("-A")
         else:
             args.extend(["-n", namespace])
 
-        stdout, stderr, rc = run_kubectl(args)
+        stdout, stderr, rc = run_kubectl(args, cluster=cluster)
         if rc != 0:
             return [{"error": stderr}]
 
@@ -326,9 +333,10 @@ def register_tools(mcp: FastMCP):
         } for c in data.get("items", [])]
 
     @mcp.tool()
-    async def kubectl_create_job_from_cronjob(cronjob_name: str, job_name: str, namespace: str = "default") -> str:
-        """Manually trigger a cronjob by creating a job from it."""
-        stdout, stderr, rc = run_kubectl(["create", "job", job_name, f"--from=cronjob/{cronjob_name}", "-n", namespace])
+    async def kubectl_create_job_from_cronjob(cronjob_name: str, job_name: str, namespace: str = "default", cluster: str = "agentic") -> str:
+        """Manually trigger a cronjob by creating a job from it.
+        cluster: agentic (default), prod, or monit."""
+        stdout, stderr, rc = run_kubectl(["create", "job", job_name, f"--from=cronjob/{cronjob_name}", "-n", namespace], cluster=cluster)
         return f"Created job {job_name} from cronjob {cronjob_name}" if rc == 0 else f"Error: {stderr}"
 
     # =========================================================================
@@ -336,9 +344,10 @@ def register_tools(mcp: FastMCP):
     # =========================================================================
 
     @mcp.tool()
-    async def kubectl_get_configmaps(namespace: str = "default") -> List[dict]:
-        """Get configmap names and data keys."""
-        stdout, stderr, rc = run_kubectl(["get", "configmaps", "-n", namespace, "-o", "json"])
+    async def kubectl_get_configmaps(namespace: str = "default", cluster: str = "agentic") -> List[dict]:
+        """Get configmap names and data keys.
+        cluster: agentic (default), prod, or monit."""
+        stdout, stderr, rc = run_kubectl(["get", "configmaps", "-n", namespace, "-o", "json"], cluster=cluster)
         if rc != 0:
             return [{"error": stderr}]
 
@@ -349,9 +358,10 @@ def register_tools(mcp: FastMCP):
         } for c in data.get("items", [])]
 
     @mcp.tool()
-    async def kubectl_get_secrets(namespace: str = "default") -> List[dict]:
-        """Get secret names and types (values NOT exposed for security)."""
-        stdout, stderr, rc = run_kubectl(["get", "secrets", "-n", namespace, "-o", "json"])
+    async def kubectl_get_secrets(namespace: str = "default", cluster: str = "agentic") -> List[dict]:
+        """Get secret names and types (values NOT exposed for security).
+        cluster: agentic (default), prod, or monit."""
+        stdout, stderr, rc = run_kubectl(["get", "secrets", "-n", namespace, "-o", "json"], cluster=cluster)
         if rc != 0:
             return [{"error": stderr}]
 
