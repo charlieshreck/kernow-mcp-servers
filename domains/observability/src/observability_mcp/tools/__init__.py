@@ -6,5 +6,6 @@ from . import metrics
 from . import alerts
 from . import grafana
 from . import gatus
+from . import ntopng
 
-__all__ = ["keep", "coroot", "metrics", "alerts", "grafana", "gatus"]
+__all__ = ["keep", "coroot", "metrics", "alerts", "grafana", "gatus", "ntopng"]

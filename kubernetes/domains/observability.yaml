@@ -24,6 +24,8 @@ data:
   GRAFANA_USER: "admin"
   # Gatus
   GATUS_URL: "http://gatus.monit.kernow.io"
+  # ntopng (on OPNsense, accessed via Caddy reverse proxy)
+  NTOPNG_URL: "https://ntopng.kernow.io"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -53,6 +55,9 @@ spec:
             - victoriametrics.monit.kernow.io
             - alertmanager.monit.kernow.io
             - gatus.monit.kernow.io
+        - ip: "10.10.0.1"
+          hostnames:
+            - ntopng.kernow.io
       containers:
         - name: mcp-server
           image: ghcr.io/charlieshreck/mcp-observability:latest
@@ -74,6 +79,12 @@ spec:
                 secretKeyRef:
                   name: mcp-monitoring-grafana
                   key: PASSWORD
+                  optional: true
+            - name: NTOPNG_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-ntopng
+                  key: API_TOKEN
                   optional: true
             # A2A REST bridge authentication
             - name: A2A_API_TOKEN

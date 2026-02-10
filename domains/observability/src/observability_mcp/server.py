@@ -10,7 +10,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route, Mount
 
 # Import tool modules
-from .tools import keep, coroot, metrics, alerts, grafana, gatus
+from .tools import keep, coroot, metrics, alerts, grafana, gatus, ntopng
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,6 +27,7 @@ mcp = FastMCP(
     - **Alerts**: AlertManager alerts, silences
     - **Grafana**: Dashboards, annotations, datasources
     - **Gatus**: Endpoint health monitoring
+    - **ntopng**: Network traffic analysis (hosts, flows, L7 protocols, alerts)
 
     Tool naming convention:
     - keep_* : Keep alert platform tools
@@ -35,6 +36,7 @@ mcp = FastMCP(
     - alert_* : AlertManager operations
     - grafana_* : Grafana dashboard/annotation tools
     - gatus_* : Endpoint health tools
+    - ntopng_* : Network traffic monitoring tools
     """,
     stateless_http=True
 )
@@ -54,6 +56,8 @@ def register_tools():
     grafana.register_tools(mcp)
     # Gatus tools
     gatus.register_tools(mcp)
+    # ntopng tools
+    ntopng.register_tools(mcp)
 
 
 # Register all tools
@@ -66,7 +70,7 @@ async def health(request):
         "status": "healthy",
         "service": "observability-mcp",
         "version": "1.0.0",
-        "components": ["keep", "coroot", "metrics", "alerts", "grafana", "gatus"]
+        "components": ["keep", "coroot", "metrics", "alerts", "grafana", "gatus", "ntopng"]
     })
 
 
