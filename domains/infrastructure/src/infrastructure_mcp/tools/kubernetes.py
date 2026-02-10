@@ -151,21 +151,24 @@ def register_tools(mcp: FastMCP):
         } for d in data.get("items", [])]
 
     @mcp.tool()
-    async def kubectl_restart_deployment(deployment_name: str, namespace: str = "default") -> str:
-        """Restart a deployment by triggering a rolling restart."""
-        stdout, stderr, rc = run_kubectl(["rollout", "restart", "deployment", deployment_name, "-n", namespace])
+    async def kubectl_restart_deployment(deployment_name: str, namespace: str = "default", cluster: str = "agentic") -> str:
+        """Restart a deployment by triggering a rolling restart.
+        cluster: agentic (default), prod, or monit."""
+        stdout, stderr, rc = run_kubectl(["rollout", "restart", "deployment", deployment_name, "-n", namespace], cluster=cluster)
         return f"Restarted {deployment_name}" if rc == 0 else f"Error: {stderr}"
 
     @mcp.tool()
-    async def kubectl_scale_deployment(deployment_name: str, replicas: int, namespace: str = "default") -> str:
-        """Scale a deployment to specified number of replicas."""
-        stdout, stderr, rc = run_kubectl(["scale", "deployment", deployment_name, f"--replicas={replicas}", "-n", namespace])
+    async def kubectl_scale_deployment(deployment_name: str, replicas: int, namespace: str = "default", cluster: str = "agentic") -> str:
+        """Scale a deployment to specified number of replicas.
+        cluster: agentic (default), prod, or monit."""
+        stdout, stderr, rc = run_kubectl(["scale", "deployment", deployment_name, f"--replicas={replicas}", "-n", namespace], cluster=cluster)
         return f"Scaled {deployment_name} to {replicas} replicas" if rc == 0 else f"Error: {stderr}"
 
     @mcp.tool()
-    async def kubectl_rollout_status(deployment_name: str, namespace: str = "default") -> str:
-        """Get rollout status of a deployment."""
-        stdout, stderr, rc = run_kubectl(["rollout", "status", "deployment", deployment_name, "-n", namespace, "--timeout=5s"])
+    async def kubectl_rollout_status(deployment_name: str, namespace: str = "default", cluster: str = "agentic") -> str:
+        """Get rollout status of a deployment.
+        cluster: agentic (default), prod, or monit."""
+        stdout, stderr, rc = run_kubectl(["rollout", "status", "deployment", deployment_name, "-n", namespace, "--timeout=5s"], cluster=cluster)
         return stdout if rc == 0 else stderr
 
     # =========================================================================
@@ -230,9 +233,10 @@ def register_tools(mcp: FastMCP):
         } for s in data.get("items", [])]
 
     @mcp.tool()
-    async def kubectl_restart_statefulset(statefulset_name: str, namespace: str = "default") -> str:
-        """Restart a statefulset."""
-        stdout, stderr, rc = run_kubectl(["rollout", "restart", "statefulset", statefulset_name, "-n", namespace])
+    async def kubectl_restart_statefulset(statefulset_name: str, namespace: str = "default", cluster: str = "agentic") -> str:
+        """Restart a statefulset.
+        cluster: agentic (default), prod, or monit."""
+        stdout, stderr, rc = run_kubectl(["rollout", "restart", "statefulset", statefulset_name, "-n", namespace], cluster=cluster)
         return f"Restarted {statefulset_name}" if rc == 0 else f"Error: {stderr}"
 
     # =========================================================================
