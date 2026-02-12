@@ -542,12 +542,12 @@ def register_tools(mcp: FastMCP):
             mac: Switch MAC in 'XX-XX-XX-XX-XX-XX' format
             master_port: Port number that initiates the LAG (lowest port recommended)
             member_ports: Other port numbers to add to the LAG (NOT including master_port)
-            lag_id: LAG group ID (1-14)
+            lag_id: LAG group ID (1-8 on TL-SG3428X-M2)
             lag_type: 1=Static LAG, 2=LACP (default: 2)
             profile_id: Optional port profile ID to apply (uses current if omitted)
         """
-        if lag_id < 1 or lag_id > 14:
-            return "Failed: lagId must be 1-14"
+        if lag_id < 1 or lag_id > 8:
+            return "Failed: lagId must be 1-8"
         if lag_type not in (1, 2):
             return "Failed: lagType must be 1 (Static) or 2 (LACP)"
         if not member_ports:
