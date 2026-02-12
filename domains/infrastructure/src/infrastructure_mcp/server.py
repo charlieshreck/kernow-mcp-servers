@@ -7,7 +7,7 @@ from starlette.applications import Starlette
 from starlette.routing import Route, Mount
 from starlette.responses import JSONResponse
 
-from infrastructure_mcp.tools import kubernetes, proxmox, truenas, cloudflare, opnsense, infisical
+from infrastructure_mcp.tools import kubernetes, proxmox, truenas, cloudflare, opnsense, infisical, omada
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,6 +28,7 @@ Provides tools for:
 - **Unbound**: DNS resolver stats, host overrides
 - **Caddy**: Reverse proxy management
 - **Infisical**: Secrets management (list, get, set)
+- **Omada**: TP-Link managed switch control (VLANs, ports, profiles)
 
 Tool prefixes:
 - kubectl_* : Kubernetes operations
@@ -37,6 +38,7 @@ Tool prefixes:
 - cloudflare_* : DNS and tunnels
 - get_*/set_*/list_*/add_* : OPNsense/AdGuard/Unbound/Caddy operations
 - list_secrets/get_secret/set_secret : Infisical secrets
+- omada_* : Omada switch/network management
 """,
     stateless_http=True
 )
@@ -48,6 +50,7 @@ truenas.register_tools(mcp)
 cloudflare.register_tools(mcp)
 opnsense.register_tools(mcp)
 infisical.register_tools(mcp)
+omada.register_tools(mcp)
 
 
 # Health check endpoints
@@ -96,6 +99,12 @@ async def ready(request):
         components["infisical"] = infisical_status.get("status", "unknown")
     except Exception as e:
         components["infisical"] = f"error: {str(e)[:50]}"
+
+    try:
+        omada_status = await omada.get_status()
+        components["omada"] = omada_status.get("status", "unknown")
+    except Exception as e:
+        components["omada"] = f"error: {str(e)[:50]}"
 
     # Overall status
     all_healthy = all(
