@@ -524,6 +524,82 @@ def register_tools(mcp: FastMCP):
         result = await _api("GET", f"switches/{mac}/lags")
         return result.get("result", [])
 
+    @mcp.tool()
+    async def omada_create_lag(
+        mac: str,
+        master_port: int,
+        member_ports: List[int],
+        lag_id: int,
+        lag_type: int = 2,
+        profile_id: Optional[str] = None,
+    ) -> str:
+        """Create a LAG (Link Aggregation Group) on a switch.
+
+        Configures the master port to aggregating mode and adds member ports
+        to form a bonded link. All member ports must be the same speed.
+
+        Args:
+            mac: Switch MAC in 'XX-XX-XX-XX-XX-XX' format
+            master_port: Port number that initiates the LAG (lowest port recommended)
+            member_ports: Other port numbers to add to the LAG (NOT including master_port)
+            lag_id: LAG group ID (1-14)
+            lag_type: 1=Static LAG, 2=LACP (default: 2)
+            profile_id: Optional port profile ID to apply (uses current if omitted)
+        """
+        if lag_id < 1 or lag_id > 14:
+            return "Failed: lagId must be 1-14"
+        if lag_type not in (1, 2):
+            return "Failed: lagType must be 1 (Static) or 2 (LACP)"
+        if not member_ports:
+            return "Failed: at least one member port required"
+        if master_port in member_ports:
+            return "Failed: master_port must not be in member_ports list"
+
+        # Get current port state for required fields
+        ports_result = await _api("GET", f"switches/{mac}/ports")
+        port_obj = None
+        for p in ports_result.get("result", []):
+            if p.get("port") == master_port:
+                port_obj = p
+                break
+        if not port_obj:
+            return f"Failed: port {master_port} not found"
+
+        payload = {
+            "name": port_obj["name"],
+            "profileId": profile_id or port_obj["profileId"],
+            "profileOverrideEnable": True,
+            "dot1pPriority": port_obj.get("dot1pPriority", 0),
+            "trustMode": port_obj.get("trustMode", 0),
+            "operation": "aggregating",
+            "topoNotifyEnable": port_obj.get("topoNotifyEnable", False),
+            "lagSetting": {
+                "lagId": lag_id,
+                "lagType": lag_type,
+                "ports": member_ports,
+            },
+        }
+
+        result = await _api("PATCH", f"switches/{mac}/ports/{master_port}", payload)
+        if result.get("errorCode") == 0:
+            mode = "LACP" if lag_type == 2 else "Static"
+            all_ports = [master_port] + member_ports
+            return f"Created LAG{lag_id} ({mode}) with ports {all_ports}"
+        return f"Failed: {result.get('msg')}"
+
+    @mcp.tool()
+    async def omada_delete_lag(mac: str, lag_id: int) -> str:
+        """Delete a LAG group, returning member ports to normal switching mode.
+
+        Args:
+            mac: Switch MAC in 'XX-XX-XX-XX-XX-XX' format
+            lag_id: LAG group ID to delete (1-14)
+        """
+        result = await _api("DELETE", f"switches/{mac}/lags/{lag_id}")
+        if result.get("errorCode") == 0:
+            return f"Deleted LAG{lag_id}"
+        return f"Failed: {result.get('msg')}"
+
     # =========================================================================
     # Site Info
     # =========================================================================
