@@ -8,12 +8,12 @@ This repository consolidates 25+ individual MCP servers into 6 domain-based serv
 
 | Domain | Components | Purpose |
 |--------|-----------|---------|
-| **observability** | Keep, Coroot, VictoriaMetrics, AlertManager, Grafana, Gatus | Monitoring, alerting, observability |
-| **infrastructure** | Kubernetes, Proxmox, TrueNAS, Cloudflare, OPNsense | Infrastructure management |
-| **knowledge** | Qdrant, Outline, Neo4j | Knowledge base, documentation, graph |
-| **home** | Home Assistant, Tasmota, UniFi, AdGuard | Home automation, IoT, network |
-| **media** | Plex, Arr-Suite (Sonarr/Radarr/etc), Tautulli | Media management |
-| **external** | Web Search, GitHub, Reddit, Wikipedia | External API integrations |
+| **observability** | Keep, Coroot, VictoriaMetrics, AlertManager, Grafana, Gatus, ntopng | Monitoring, alerting, observability |
+| **infrastructure** | Kubernetes, ArgoCD, Proxmox, TrueNAS, Cloudflare, OPNsense, Caddy, Infisical, Omada | Infrastructure management |
+| **knowledge** | Qdrant, Outline, Neo4j, SilverBullet, Vikunja | Knowledge base, documentation, graph |
+| **home** | Home Assistant, Tasmota, UniFi, AdGuard, Homepage | Home automation, IoT, network |
+| **media** | Plex, Sonarr, Radarr, Prowlarr, Overseerr, Tautulli, Transmission, SABnzbd, Huntarr, Cleanuparr, Maintainerr, Notifiarr, Recommendarr | Media management |
+| **external** | Web Search, GitHub, Reddit, Wikipedia, Playwright browser | External API integrations |
 
 ## Benefits
 
