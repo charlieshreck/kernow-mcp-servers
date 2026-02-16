@@ -50,50 +50,35 @@ register_tools()
 
 
 async def health_check(request):
-    """Health check endpoint."""
-    components = {}
+    """Liveness check — lightweight, no external dependencies."""
+    return JSONResponse({
+        "status": "healthy",
+        "service": "home-mcp",
+        "version": "1.0.0",
+    })
 
-    # Check Home Assistant
-    try:
-        result = await homeassistant.get_status()
-        components["homeassistant"] = result.get("status", "unhealthy")
-    except Exception as e:
-        components["homeassistant"] = "unhealthy"
-        logger.error(f"Home Assistant health check failed: {e}")
 
-    # Check Tasmota
-    try:
-        result = await tasmota.get_status()
-        components["tasmota"] = result.get("status", "unhealthy")
-    except Exception as e:
-        components["tasmota"] = "unhealthy"
-        logger.error(f"Tasmota health check failed: {e}")
+async def deep_health_check(request):
+    """Deep health check with component status (for debugging, not probes)."""
+    import asyncio
 
-    # Check UniFi
-    try:
-        result = await unifi.get_status()
-        components["unifi"] = result.get("status", "unhealthy")
-    except Exception as e:
-        components["unifi"] = "unhealthy"
-        logger.error(f"UniFi health check failed: {e}")
+    async def check_component(name, get_status_fn):
+        try:
+            result = await asyncio.wait_for(get_status_fn(), timeout=5.0)
+            return name, result.get("status", "unhealthy")
+        except Exception as e:
+            logger.error(f"{name} health check failed: {e}")
+            return name, "unhealthy"
 
-    # Check AdGuard
-    try:
-        result = await adguard.get_status()
-        components["adguard"] = result.get("status", "unhealthy")
-    except Exception as e:
-        components["adguard"] = "unhealthy"
-        logger.error(f"AdGuard health check failed: {e}")
+    results = await asyncio.gather(
+        check_component("homeassistant", homeassistant.get_status),
+        check_component("tasmota", tasmota.get_status),
+        check_component("unifi", unifi.get_status),
+        check_component("adguard", adguard.get_status),
+        check_component("homepage", homepage.get_status),
+    )
+    components = dict(results)
 
-    # Check Homepage
-    try:
-        result = await homepage.get_status()
-        components["homepage"] = result.get("status", "unhealthy")
-    except Exception as e:
-        components["homepage"] = "unhealthy"
-        logger.error(f"Homepage health check failed: {e}")
-
-    # Calculate overall health (healthy if at least half components work)
     healthy_count = sum(1 for v in components.values() if v == "healthy")
     total_count = len(components)
     overall_status = "healthy" if healthy_count >= total_count // 2 else "unhealthy"
@@ -122,6 +107,7 @@ mcp_app = mcp.http_app()
 
 routes = [
     Route("/health", health_check, methods=["GET"]),
+    Route("/health/deep", deep_health_check, methods=["GET"]),
     Route("/ready", ready_check, methods=["GET"]),
     Route("/api/call", create_rest_bridge(mcp, "home-mcp"), methods=["POST"]),
     Mount("/", app=mcp_app),

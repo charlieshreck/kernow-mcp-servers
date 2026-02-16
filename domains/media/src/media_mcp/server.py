@@ -173,16 +173,50 @@ async def check_components() -> dict:
 
 
 async def health_endpoint(request):
-    """Health check endpoint."""
-    components = await check_components()
+    """Liveness check — lightweight, no external dependencies."""
+    return JSONResponse({
+        "status": "healthy",
+        "service": "media-mcp",
+        "version": "1.0.0",
+    })
+
+
+async def deep_health_endpoint(request):
+    """Deep health check with component status (for debugging, not probes)."""
+    import asyncio
+
+    async def check_with_timeout(name, check_fn):
+        try:
+            return name, await asyncio.wait_for(check_fn(), timeout=5.0)
+        except Exception:
+            return name, False
+
+    # Run all component checks concurrently
+    results = await asyncio.gather(*(
+        check_with_timeout(name, fn) for name, fn in [
+            ("plex", lambda: plex.get_server_status()),
+            ("sonarr", lambda: sonarr.get_system_status()),
+            ("radarr", lambda: radarr.get_system_status()),
+            ("prowlarr", lambda: prowlarr.get_health()),
+            ("overseerr", lambda: overseerr.get_status()),
+            ("tautulli", lambda: tautulli.get_activity()),
+            ("transmission", lambda: transmission.list_torrents()),
+            ("sabnzbd", lambda: sabnzbd.get_queue()),
+            ("huntarr", lambda: huntarr.get_status()),
+            ("cleanuparr", lambda: cleanuparr.get_status()),
+            ("maintainerr", lambda: maintainerr.get_status()),
+            ("notifiarr", lambda: notifiarr.get_status()),
+            ("recommendarr", lambda: recommendarr.get_status()),
+        ]
+    ))
+    components = {name: bool(result) and (not isinstance(result, (dict, str)) or "error" not in str(result))
+                  for name, result in results}
+
     healthy_count = sum(1 for v in components.values() if v)
     total = len(components)
 
-    # Healthy if at least half the components are working
-    is_healthy = healthy_count >= total // 2
-
     return JSONResponse({
-        "status": "healthy" if is_healthy else "degraded",
+        "status": "healthy" if healthy_count >= total // 2 else "degraded",
         "service": "media-mcp",
         "version": "1.0.0",
         "components": {k: "healthy" if v else "unhealthy" for k, v in components.items()},
@@ -192,13 +226,8 @@ async def health_endpoint(request):
 
 
 async def ready_endpoint(request):
-    """Readiness probe - checks if at least one component is available."""
-    components = await check_components()
-    any_healthy = any(components.values())
-
-    if any_healthy:
-        return JSONResponse({"status": "ready"})
-    return JSONResponse({"status": "not ready"}, status_code=503)
+    """Readiness probe — lightweight."""
+    return JSONResponse({"status": "ready"})
 
 
 def main():
@@ -214,6 +243,7 @@ def main():
     # REST routes
     routes = [
         Route("/health", health_endpoint, methods=["GET"]),
+        Route("/health/deep", deep_health_endpoint, methods=["GET"]),
         Route("/ready", ready_endpoint, methods=["GET"]),
         Route("/api/call", create_rest_bridge(mcp, "media-mcp"), methods=["POST"]),
     ]
