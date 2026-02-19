@@ -576,7 +576,7 @@ def register_tools(mcp: FastMCP):
             "lagSetting": {
                 "lagId": lag_id,
                 "lagType": lag_type,
-                "ports": member_ports,
+                "ports": [master_port] + member_ports,
             },
         }
 
