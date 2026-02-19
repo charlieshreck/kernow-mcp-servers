@@ -17,7 +17,7 @@ data:
   PROXMOX_HIKURANGI_URL: "https://10.30.0.10:8006"
 
   # TrueNAS
-  TRUENAS_HDD_URL: "https://10.20.0.103"
+  TRUENAS_HDD_URL: "https://10.10.0.103"
   TRUENAS_MEDIA_URL: "https://10.20.0.100"
 
   # Cloudflare
