@@ -113,11 +113,10 @@ metadata:
   labels:
     app: external-mcp
 spec:
-  type: NodePort
+  type: ClusterIP
   ports:
     - port: 8000
       targetPort: 8000
-      nodePort: 31122
       name: http
   selector:
     app: external-mcp

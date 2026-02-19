@@ -128,13 +128,12 @@ metadata:
     component: mcp
     domain: home
 spec:
-  type: NodePort
+  type: ClusterIP
   selector:
     app: home-mcp
   ports:
     - port: 8000
       targetPort: 8000
-      nodePort: 31124
       name: http
 ---
 apiVersion: networking.k8s.io/v1

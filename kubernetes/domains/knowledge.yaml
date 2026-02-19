@@ -120,11 +120,10 @@ metadata:
   labels:
     app: knowledge-mcp
 spec:
-  type: NodePort
+  type: ClusterIP
   ports:
     - port: 8000
       targetPort: 8000
-      nodePort: 31125  # Consolidated knowledge MCP (new port)
       name: http
   selector:
     app: knowledge-mcp

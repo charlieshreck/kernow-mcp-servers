@@ -166,13 +166,12 @@ metadata:
     component: mcp
     domain: media
 spec:
-  type: NodePort
+  type: ClusterIP
   selector:
     app: media-mcp
   ports:
     - port: 8000
       targetPort: 8000
-      nodePort: 31123
       name: http
 ---
 apiVersion: networking.k8s.io/v1
