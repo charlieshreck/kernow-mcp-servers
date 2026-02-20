@@ -531,20 +531,21 @@ def register_tools(mcp: FastMCP):
         member_ports: List[int],
         lag_id: int,
         lag_type: int = 2,
-        profile_id: Optional[str] = None,
     ) -> str:
         """Create a LAG (Link Aggregation Group) on a switch.
 
         Configures the master port to aggregating mode and adds member ports
         to form a bonded link. All member ports must be the same speed.
 
+        IMPORTANT: Uses minimal payload — the Omada API silently ignores
+        LAG creation if extra fields (profileId, name, etc.) are included.
+
         Args:
             mac: Switch MAC in 'XX-XX-XX-XX-XX-XX' format
-            master_port: Port number that initiates the LAG (lowest port recommended)
+            master_port: Port number that initiates the LAG
             member_ports: Other port numbers to add to the LAG (NOT including master_port)
             lag_id: LAG group ID (1-8 on TL-SG3428X-M2)
             lag_type: 1=Static LAG, 2=LACP (default: 2)
-            profile_id: Optional port profile ID to apply (uses current if omitted)
         """
         if lag_id < 1 or lag_id > 8:
             return "Failed: lagId must be 1-8"
@@ -555,35 +556,20 @@ def register_tools(mcp: FastMCP):
         if master_port in member_ports:
             return "Failed: master_port must not be in member_ports list"
 
-        # Get current port state for required fields
-        ports_result = await _api("GET", f"switches/{mac}/ports")
-        port_obj = None
-        for p in ports_result.get("result", []):
-            if p.get("port") == master_port:
-                port_obj = p
-                break
-        if not port_obj:
-            return f"Failed: port {master_port} not found"
-
+        all_ports = [master_port] + member_ports
         payload = {
-            "name": port_obj["name"],
-            "profileId": profile_id or port_obj["profileId"],
-            "profileOverrideEnable": True,
-            "dot1pPriority": port_obj.get("dot1pPriority", 0),
-            "trustMode": port_obj.get("trustMode", 0),
             "operation": "aggregating",
-            "topoNotifyEnable": port_obj.get("topoNotifyEnable", False),
+            "profileOverrideEnable": True,
             "lagSetting": {
                 "lagId": lag_id,
                 "lagType": lag_type,
-                "ports": [master_port] + member_ports,
+                "ports": all_ports,
             },
         }
 
         result = await _api("PATCH", f"switches/{mac}/ports/{master_port}", payload)
         if result.get("errorCode") == 0:
             mode = "LACP" if lag_type == 2 else "Static"
-            all_ports = [master_port] + member_ports
             return f"Created LAG{lag_id} ({mode}) with ports {all_ports}"
         return f"Failed: {result.get('msg')}"
 
