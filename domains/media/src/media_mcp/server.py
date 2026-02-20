@@ -41,7 +41,6 @@ mcp = FastMCP(
     - notifiarr_* : Notification client
     - recommendarr_* : AI-powered recommendations
     """,
-    stateless_http=True
 )
 
 # Register all tools
@@ -249,7 +248,7 @@ def main():
     ]
 
     # Get MCP ASGI app
-    mcp_app = mcp.http_app()
+    mcp_app = mcp.http_app(stateless_http=True)
 
     @asynccontextmanager
     async def lifespan(app):

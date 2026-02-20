@@ -24,12 +24,11 @@ def create_mcp_server(
         version: Server version string
 
     Returns:
-        Configured FastMCP instance with stateless_http=True
+        Configured FastMCP instance (pass stateless_http=True to http_app())
     """
     return FastMCP(
         name=name,
         instructions=instructions,
-        stateless_http=True,  # Required for Kubernetes pod restarts
     )
 
 

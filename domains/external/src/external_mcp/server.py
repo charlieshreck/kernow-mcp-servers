@@ -34,7 +34,6 @@ mcp = FastMCP(
     - wikipedia_* : Wikipedia knowledge tools
     - browser_* : Browser automation tools
     """,
-    stateless_http=True
 )
 
 
@@ -76,7 +75,7 @@ from kernow_mcp_common.base import create_rest_bridge
 
 # Create Starlette app with routes
 # Use http_app() for stateless HTTP MCP transport
-mcp_app = mcp.http_app()
+mcp_app = mcp.http_app(stateless_http=True)
 
 routes = [
     Route("/health", health, methods=["GET"]),

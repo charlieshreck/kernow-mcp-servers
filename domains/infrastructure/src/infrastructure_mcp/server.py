@@ -40,7 +40,6 @@ Tool prefixes:
 - list_secrets/get_secret/set_secret : Infisical secrets
 - omada_* : Omada switch/network management
 """,
-    stateless_http=True
 )
 
 # Register all tools
@@ -132,7 +131,7 @@ def main():
     ]
 
     # Mount MCP app
-    mcp_app = mcp.http_app()
+    mcp_app = mcp.http_app(stateless_http=True)
     app = Starlette(
         routes=rest_routes + [Mount("/", app=mcp_app)],
         lifespan=mcp_app.lifespan

@@ -27,7 +27,6 @@ mcp = FastMCP(
     instructions="""MCP server for comprehensive knowledge base operations.
     Collections: runbooks, documentation, entities, decisions, agent_events.
     Use for semantic search, entity lookup, runbook management, and decision tracking.""",
-    stateless_http=True
 )
 
 # Register all tool modules
@@ -314,7 +313,7 @@ def main():
         Route("/webhooks/reconcile", reconcile_webhook, methods=["POST", "GET"]),
     ]
 
-    mcp_app = mcp.http_app()
+    mcp_app = mcp.http_app(stateless_http=True)
     app = Starlette(
         routes=rest_routes + [Mount("/", app=mcp_app)],
         lifespan=mcp_app.lifespan
