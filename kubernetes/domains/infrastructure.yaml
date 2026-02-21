@@ -14,7 +14,7 @@ data:
   # Proxmox (multi-host)
   PROXMOX_RUAPEHU_URL: "https://10.10.0.10:8006"
   PROXMOX_PIHANGA_URL: "https://10.10.0.20:8006"
-  PROXMOX_HIKURANGI_URL: "https://10.30.0.10:8006"
+  PROXMOX_HIKURANGI_URL: "https://10.10.0.178:8006"
 
   # TrueNAS
   TRUENAS_HDD_URL: "https://10.10.0.103"

@@ -34,7 +34,7 @@ PROXMOX_HOSTS = {
         "description": "Monitoring + Backup cluster (Ryzen 5 7640HS, 28GB)",
     },
     "hikurangi": {
-        "url": os.environ.get("PROXMOX_HIKURANGI_URL", "https://10.30.0.10:8006"),
+        "url": os.environ.get("PROXMOX_HIKURANGI_URL", "https://10.10.0.178:8006"),
         "token_id": os.environ.get("PROXMOX_HIKURANGI_TOKEN_ID", ""),
         "token_secret": os.environ.get("PROXMOX_HIKURANGI_TOKEN_SECRET", ""),
         "description": "IaC + Test VMs (N150, 12GB) - formerly Carrick",
