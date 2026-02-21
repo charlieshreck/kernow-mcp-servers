@@ -3,31 +3,16 @@
 import os
 import json
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 
 import httpx
 from fastmcp import FastMCP
-from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
 # Configuration
 VICTORIA_METRICS_URL = os.environ.get("VICTORIA_METRICS_URL", "http://victoriametrics.monit.kernow.io")
-
-
-class QueryInput(BaseModel):
-    query: str = Field(description="PromQL query string")
-    start: str = Field(default="1h", description="Time range start as duration (e.g., '1h', '30m', '24h')")
-    step: str = Field(default="1m", description="Query resolution step")
-
-
-class InstantQueryInput(BaseModel):
-    query: str = Field(description="PromQL query string")
-
-
-class MetricSearchInput(BaseModel):
-    search: str = Field(default="", description="Optional search filter")
 
 
 def _parse_duration(duration: str) -> timedelta:
@@ -63,7 +48,11 @@ def register_tools(mcp: FastMCP):
     """Register VictoriaMetrics tools with the MCP server."""
 
     @mcp.tool(name="query_metrics")
-    async def query_metrics(params: QueryInput) -> str:
+    async def query_metrics(
+        query: str,
+        start: str = "1h",
+        step: str = "1m",
+    ) -> str:
         """Execute PromQL query against VictoriaMetrics.
 
         Args:
@@ -73,13 +62,13 @@ def register_tools(mcp: FastMCP):
         """
         try:
             end = datetime.now()
-            start_time = end - _parse_duration(params.start)
+            start_time = end - _parse_duration(start)
 
             result = await _vm_api("/query_range", {
-                "query": params.query,
+                "query": query,
                 "start": int(start_time.timestamp()),
                 "end": int(end.timestamp()),
-                "step": params.step
+                "step": step
             })
 
             return json.dumps(result, indent=2)
@@ -87,10 +76,10 @@ def register_tools(mcp: FastMCP):
             return _handle_error(e)
 
     @mcp.tool(name="query_metrics_instant")
-    async def query_metrics_instant(params: InstantQueryInput) -> str:
+    async def query_metrics_instant(query: str) -> str:
         """Execute instant PromQL query against VictoriaMetrics."""
         try:
-            result = await _vm_api("/query", {"query": params.query})
+            result = await _vm_api("/query", {"query": query})
             return json.dumps(result, indent=2)
         except Exception as e:
             return _handle_error(e)
@@ -114,14 +103,14 @@ def register_tools(mcp: FastMCP):
             return _handle_error(e)
 
     @mcp.tool(name="get_metric_names")
-    async def get_metric_names(params: MetricSearchInput) -> str:
+    async def get_metric_names(search: str = "") -> str:
         """Get available metric names, optionally filtered by search term."""
         try:
             result = await _vm_api("/label/__name__/values")
             names = result.get("data", [])
 
-            if params.search:
-                names = [n for n in names if params.search.lower() in n.lower()]
+            if search:
+                names = [n for n in names if search.lower() in n.lower()]
 
             return json.dumps({"metrics": names[:100], "total": len(names)}, indent=2)
         except Exception as e:

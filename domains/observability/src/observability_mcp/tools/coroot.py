@@ -7,7 +7,6 @@ from typing import Dict, Any, Optional
 
 import httpx
 from fastmcp import FastMCP
-from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -17,20 +16,6 @@ COROOT_PROJECT_NAME = os.environ.get("COROOT_PROJECT", "all-clusters")
 
 # Cache for project name -> ID mapping
 _PROJECT_ID_CACHE: Dict[str, str] = {}
-
-
-class ServiceInput(BaseModel):
-    service: str = Field(description="Service name")
-    namespace: str = Field(default="ai-platform", description="Kubernetes namespace")
-
-
-class AppIdInput(BaseModel):
-    app_id: str = Field(description="Full Coroot application ID (format: cluster_id:namespace:Kind:name). Get IDs from coroot_get_infrastructure_overview.")
-
-
-class TimeRangeInput(BaseModel):
-    hours: int = Field(default=24, description="Time range in hours")
-    severity: Optional[str] = Field(default=None, description="Filter: critical, warning, info")
 
 
 async def _get_project_id(project_name: str) -> str:
@@ -90,24 +75,27 @@ def register_tools(mcp: FastMCP):
     """Register Coroot tools with the MCP server."""
 
     @mcp.tool(name="coroot_get_service_metrics")
-    async def coroot_get_service_metrics(params: AppIdInput) -> str:
+    async def coroot_get_service_metrics(app_id: str) -> str:
         """Get metrics for a specific service (CPU, memory, latency, error rate).
         Use app_id from coroot_get_infrastructure_overview (format: cluster_id:namespace:Kind:name)."""
         try:
-            result = await _coroot_api(f"app/{params.app_id}")
+            result = await _coroot_api(f"app/{app_id}")
             return json.dumps(result, indent=2)
         except Exception as e:
             return _handle_error(e)
 
     @mcp.tool(name="coroot_get_recent_anomalies")
-    async def coroot_get_recent_anomalies(params: TimeRangeInput) -> str:
+    async def coroot_get_recent_anomalies(
+        hours: int = 24,
+        severity: Optional[str] = None,
+    ) -> str:
         """Get recent anomalies detected by Coroot (critical, warning, info)."""
         try:
             result = await _coroot_api("incidents")
             incidents = result if isinstance(result, list) else result.get("incidents", [])
 
-            if params.severity:
-                incidents = [i for i in incidents if i.get("severity", "").lower() == params.severity.lower()]
+            if severity:
+                incidents = [i for i in incidents if i.get("severity", "").lower() == severity.lower()]
 
             lines = [f"# Recent Anomalies ({len(incidents)})", ""]
             for inc in incidents[:20]:
@@ -121,11 +109,11 @@ def register_tools(mcp: FastMCP):
             return _handle_error(e)
 
     @mcp.tool(name="coroot_get_service_dependencies")
-    async def coroot_get_service_dependencies(params: AppIdInput) -> str:
+    async def coroot_get_service_dependencies(app_id: str) -> str:
         """Get upstream and downstream service dependencies for a specific app.
         Use app_id from coroot_get_infrastructure_overview (format: cluster_id:namespace:Kind:name)."""
         try:
-            result = await _coroot_api(f"app/{params.app_id}")
+            result = await _coroot_api(f"app/{app_id}")
             return json.dumps(result, indent=2)
         except Exception as e:
             return _handle_error(e)

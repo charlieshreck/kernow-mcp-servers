@@ -10,7 +10,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route, Mount
 
 # Import tool modules
-from .tools import keep, coroot, metrics, alerts, grafana, gatus, ntopng
+from .tools import coroot, metrics, alerts, grafana, gatus, ntopng
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -21,7 +21,6 @@ mcp = FastMCP(
     instructions="""Consolidated observability MCP for the Kernow homelab.
 
     Provides tools for:
-    - **Keep**: Alert aggregation, deduplication, correlation, incidents
     - **Coroot**: Service metrics, anomalies, dependencies
     - **Metrics**: VictoriaMetrics queries (PromQL), scrape targets
     - **Alerts**: AlertManager alerts, silences
@@ -30,10 +29,9 @@ mcp = FastMCP(
     - **ntopng**: Network traffic analysis (hosts, flows, L7 protocols, alerts)
 
     Tool naming convention:
-    - keep_* : Keep alert platform tools
     - coroot_* : Coroot observability tools
     - query_* : VictoriaMetrics metric queries
-    - alert_* : AlertManager operations
+    - list_alerts / create_silence / etc : AlertManager operations
     - grafana_* : Grafana dashboard/annotation tools
     - gatus_* : Endpoint health tools
     - ntopng_* : Network traffic monitoring tools
@@ -43,8 +41,6 @@ mcp = FastMCP(
 
 def register_tools():
     """Register all tools from submodules."""
-    # Keep tools
-    keep.register_tools(mcp)
     # Coroot tools
     coroot.register_tools(mcp)
     # VictoriaMetrics tools
@@ -69,7 +65,7 @@ async def health(request):
         "status": "healthy",
         "service": "observability-mcp",
         "version": "1.0.0",
-        "components": ["keep", "coroot", "metrics", "alerts", "grafana", "gatus", "ntopng"]
+        "components": ["coroot", "metrics", "alerts", "grafana", "gatus", "ntopng"]
     })
 
 

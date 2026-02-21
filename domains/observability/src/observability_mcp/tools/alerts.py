@@ -3,34 +3,16 @@
 import os
 import json
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 
 import httpx
 from fastmcp import FastMCP
-from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
 # Configuration
 ALERTMANAGER_URL = os.environ.get("ALERTMANAGER_URL", "http://alertmanager.monit.kernow.io")
-
-
-class AlertsFilterInput(BaseModel):
-    active: bool = Field(default=True, description="Include active alerts")
-    silenced: bool = Field(default=False, description="Include silenced alerts")
-    inhibited: bool = Field(default=False, description="Include inhibited alerts")
-
-
-class SilenceInput(BaseModel):
-    alertname: str = Field(description="Alert name to silence")
-    duration_hours: int = Field(default=2, description="How long to silence")
-    comment: str = Field(default="Created via observability-mcp", description="Reason for silence")
-    matcher_type: str = Field(default="=", description="Match type: '=', '=~', '!='")
-
-
-class SilenceIdInput(BaseModel):
-    silence_id: str = Field(description="The silence UUID to delete")
 
 
 async def _am_api(endpoint: str, method: str = "GET", data: dict = None) -> Dict[str, Any]:
@@ -62,15 +44,19 @@ def register_tools(mcp: FastMCP):
     """Register AlertManager tools with the MCP server."""
 
     @mcp.tool(name="list_alerts")
-    async def list_alerts(params: AlertsFilterInput) -> str:
+    async def list_alerts(
+        active: bool = True,
+        silenced: bool = False,
+        inhibited: bool = False,
+    ) -> str:
         """List current AlertManager alerts."""
         try:
             filters = []
-            if params.active:
+            if active:
                 filters.append("active=true")
-            if params.silenced:
+            if silenced:
                 filters.append("silenced=true")
-            if params.inhibited:
+            if inhibited:
                 filters.append("inhibited=true")
 
             query = "&".join(filters) if filters else ""
@@ -90,37 +76,42 @@ def register_tools(mcp: FastMCP):
             return _handle_error(e)
 
     @mcp.tool(name="create_silence")
-    async def create_silence(params: SilenceInput) -> str:
+    async def create_silence(
+        alertname: str,
+        duration_hours: int = 2,
+        comment: str = "Created via observability-mcp",
+        matcher_type: str = "=",
+    ) -> str:
         """Create a silence for matching alerts."""
         try:
             now = datetime.utcnow()
-            ends = now + timedelta(hours=params.duration_hours)
+            ends = now + timedelta(hours=duration_hours)
 
             data = {
                 "matchers": [{
                     "name": "alertname",
-                    "value": params.alertname,
-                    "isRegex": params.matcher_type == "=~",
-                    "isEqual": params.matcher_type != "!="
+                    "value": alertname,
+                    "isRegex": matcher_type == "=~",
+                    "isEqual": matcher_type != "!="
                 }],
                 "startsAt": now.isoformat() + "Z",
                 "endsAt": ends.isoformat() + "Z",
                 "createdBy": "observability-mcp",
-                "comment": params.comment
+                "comment": comment
             }
 
             result = await _am_api("/silences", method="POST", data=data)
             silence_id = result.get("silenceID", "unknown")
-            return f"[OK] Created silence {silence_id} for '{params.alertname}' until {ends.isoformat()}"
+            return f"[OK] Created silence {silence_id} for '{alertname}' until {ends.isoformat()}"
         except Exception as e:
             return _handle_error(e)
 
     @mcp.tool(name="delete_silence")
-    async def delete_silence(params: SilenceIdInput) -> str:
+    async def delete_silence(silence_id: str) -> str:
         """Delete/expire a silence by ID."""
         try:
-            await _am_api(f"/silence/{params.silence_id}", method="DELETE")
-            return f"[OK] Deleted silence {params.silence_id}"
+            await _am_api(f"/silence/{silence_id}", method="DELETE")
+            return f"[OK] Deleted silence {silence_id}"
         except Exception as e:
             return _handle_error(e)
 
