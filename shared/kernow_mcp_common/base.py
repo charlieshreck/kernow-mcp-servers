@@ -175,19 +175,23 @@ def create_rest_bridge(
         import json
 
         async def _call_tool(client, name, args):
-            """Call tool, auto-wrapping in params if needed for Pydantic model tools."""
+            """Call tool, auto-wrapping/unwrapping params as needed."""
             try:
                 return await client.call_tool(name, args)
             except Exception as e:
                 err = str(e)
-                # Only auto-wrap if error specifically indicates 'params' field is
-                # required (Pydantic model tools). Avoid false positives on errors
-                # that merely mention "params" for other reasons.
+                # Auto-wrap: flat kwargs tool needs params wrapper (Pydantic model)
                 if ("params" not in args
                         and ("params\n  Field required" in err
                              or "missing a required argument: 'params'" in err)):
                     logger.debug(f"Retrying {name} with params wrapper")
                     return await client.call_tool(name, {"params": args})
+                # Auto-unwrap: caller sent {"params": {...}} but tool uses flat kwargs
+                if ("unexpected_keyword_argument" in err
+                        and list(args.keys()) == ["params"]
+                        and isinstance(args.get("params"), dict)):
+                    logger.debug(f"Retrying {name} by unwrapping params")
+                    return await client.call_tool(name, args["params"])
                 raise
 
         def _extract_output(result):
