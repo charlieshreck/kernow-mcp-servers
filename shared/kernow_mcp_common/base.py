@@ -180,8 +180,12 @@ def create_rest_bridge(
                 return await client.call_tool(name, args)
             except Exception as e:
                 err = str(e)
-                # If tool expects a Pydantic model param, wrap and retry
-                if "params" in err and "missing" in err.lower() and "params" not in args:
+                # Only auto-wrap if error specifically indicates 'params' field is
+                # required (Pydantic model tools). Avoid false positives on errors
+                # that merely mention "params" for other reasons.
+                if ("params" not in args
+                        and ("params\n  Field required" in err
+                             or "missing a required argument: 'params'" in err)):
                     logger.debug(f"Retrying {name} with params wrapper")
                     return await client.call_tool(name, {"params": args})
                 raise
