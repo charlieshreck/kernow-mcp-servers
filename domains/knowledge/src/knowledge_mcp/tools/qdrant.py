@@ -851,10 +851,19 @@ def register_tools(mcp: FastMCP):
     async def list_recent_events(
         limit: int = 50,
         event_type: Optional[str] = None,
-        source_agent: Optional[str] = None
+        source_agent: Optional[str] = None,
+        hours: Optional[int] = None
     ) -> List[dict]:
-        """List recent events, optionally filtered by type or source."""
+        """List recent events, optionally filtered by type, source, or time window.
+
+        Args:
+            limit: Maximum number of events to return (default 50)
+            event_type: Filter by event type (e.g. 'alert', 'incident.processed')
+            source_agent: Filter by source agent name
+            hours: Only return events from the last N hours
+        """
         try:
+            from datetime import datetime, timezone, timedelta
             filter_conditions = []
             if event_type:
                 filter_conditions.append({"key": "event_type", "match": {"value": event_type}})
@@ -867,7 +876,13 @@ def register_tools(mcp: FastMCP):
 
             result = await qdrant_request("/collections/agent_events/points/scroll", "POST", body)
             events = [p.get("payload", {}) for p in result.get("result", {}).get("points", [])]
-            return sorted(events, key=lambda x: x.get("timestamp", ""), reverse=True)[:limit]
+            events = sorted(events, key=lambda x: x.get("timestamp", ""), reverse=True)[:limit]
+
+            if hours is not None:
+                cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+                events = [e for e in events if e.get("timestamp", "") >= cutoff]
+
+            return events
         except Exception as e:
             return [{"error": str(e)}]
 

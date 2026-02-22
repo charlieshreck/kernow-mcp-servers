@@ -93,6 +93,8 @@ async def silverbullet_api(
         else:
             raise ValueError(f"Unsupported method: {method}")
 
+        if resp.status_code == 401:
+            _session_cookie = None  # Invalidate stale cookie for next attempt
         resp.raise_for_status()
 
         if method == "GET" and not get_meta:
@@ -159,6 +161,8 @@ async def _get_silverbullet_sync_pages() -> List[str]:
 
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
         resp = await client.get(url, headers=headers)
+        if resp.status_code == 401:
+            _session_cookie = None  # Invalidate stale cookie for next attempt
         resp.raise_for_status()
         files = resp.json()
 
