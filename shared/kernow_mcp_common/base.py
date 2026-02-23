@@ -180,27 +180,55 @@ def create_rest_bridge(
             Uses mcp.call_tool() for direct server-side invocation, bypassing
             the Client in-process transport which can have validation issues
             with certain FastMCP versions.
+
+            Handles both exception-based and result-based error reporting from
+            FastMCP (some versions return is_error=True results for validation
+            errors instead of raising exceptions).
             """
+            def _is_error_result(result):
+                return hasattr(result, 'is_error') and result.is_error
+
+            def _error_text(result):
+                if hasattr(result, 'content') and result.content:
+                    return result.content[0].text if hasattr(result.content[0], 'text') else str(result.content[0])
+                return ""
+
+            def _needs_wrap(error_msg, call_args):
+                return ("params" not in call_args
+                        and ("params\n  Field required" in error_msg
+                             or "missing a required argument: 'params'" in error_msg))
+
+            def _needs_unwrap(error_msg, call_args):
+                return ("unexpected_keyword_argument" in error_msg
+                        and list(call_args.keys()) == ["params"]
+                        and isinstance(call_args.get("params"), dict))
+
             try:
-                return await mcp.call_tool(name, args)
+                result = await mcp.call_tool(name, args)
             except Exception as e:
                 err = str(e)
-                # Auto-wrap: flat kwargs tool needs params wrapper (Pydantic model)
-                if ("params" not in args
-                        and ("params\n  Field required" in err
-                             or "missing a required argument: 'params'" in err)):
+                if _needs_wrap(err, args):
                     logger.debug(f"Retrying {name} with params wrapper")
                     try:
                         return await mcp.call_tool(name, {"params": args})
                     except Exception:
-                        raise e  # If wrap also fails, report original error
-                # Auto-unwrap: caller sent {"params": {...}} but tool uses flat kwargs
-                if ("unexpected_keyword_argument" in err
-                        and list(args.keys()) == ["params"]
-                        and isinstance(args.get("params"), dict)):
+                        raise e
+                if _needs_unwrap(err, args):
                     logger.debug(f"Retrying {name} by unwrapping params")
                     return await mcp.call_tool(name, args["params"])
                 raise
+
+            # Handle error results (FastMCP may return is_error=True instead of raising)
+            if _is_error_result(result):
+                err = _error_text(result)
+                if _needs_wrap(err, args):
+                    logger.debug(f"Retrying {name} with params wrapper (error result)")
+                    return await mcp.call_tool(name, {"params": args})
+                if _needs_unwrap(err, args):
+                    logger.debug(f"Retrying {name} by unwrapping params (error result)")
+                    return await mcp.call_tool(name, args["params"])
+
+            return result
 
         def _extract_output(result):
             """Extract JSON-safe output from tool result."""
