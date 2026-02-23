@@ -196,7 +196,8 @@ def create_rest_bridge(
             def _needs_wrap(error_msg, call_args):
                 return ("params" not in call_args
                         and ("params\n  Field required" in error_msg
-                             or "missing a required argument: 'params'" in error_msg))
+                             or "missing a required argument: 'params'" in error_msg
+                             or ("params" in error_msg and "Missing required argument" in error_msg)))
 
             def _needs_unwrap(error_msg, call_args):
                 return ("unexpected_keyword_argument" in error_msg
