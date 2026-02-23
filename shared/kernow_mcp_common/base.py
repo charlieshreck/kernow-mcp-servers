@@ -4,7 +4,7 @@ import logging
 import os
 from typing import Optional, Callable, Awaitable, Any
 
-from fastmcp import FastMCP, Client
+from fastmcp import FastMCP
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -174,10 +174,15 @@ def create_rest_bridge(
 
         import json
 
-        async def _call_tool(client, name, args):
-            """Call tool, auto-wrapping/unwrapping params as needed."""
+        async def _call_tool(name, args):
+            """Call tool directly on MCP server, auto-wrapping/unwrapping params as needed.
+
+            Uses mcp.call_tool() for direct server-side invocation, bypassing
+            the Client in-process transport which can have validation issues
+            with certain FastMCP versions.
+            """
             try:
-                return await client.call_tool(name, args)
+                return await mcp.call_tool(name, args)
             except Exception as e:
                 err = str(e)
                 # Auto-wrap: flat kwargs tool needs params wrapper (Pydantic model)
@@ -185,24 +190,35 @@ def create_rest_bridge(
                         and ("params\n  Field required" in err
                              or "missing a required argument: 'params'" in err)):
                     logger.debug(f"Retrying {name} with params wrapper")
-                    return await client.call_tool(name, {"params": args})
+                    try:
+                        return await mcp.call_tool(name, {"params": args})
+                    except Exception:
+                        raise e  # If wrap also fails, report original error
                 # Auto-unwrap: caller sent {"params": {...}} but tool uses flat kwargs
                 if ("unexpected_keyword_argument" in err
                         and list(args.keys()) == ["params"]
                         and isinstance(args.get("params"), dict)):
                     logger.debug(f"Retrying {name} by unwrapping params")
-                    return await client.call_tool(name, args["params"])
+                    return await mcp.call_tool(name, args["params"])
                 raise
 
         def _extract_output(result):
-            """Extract JSON-safe output from CallToolResult."""
-            if result.content:
+            """Extract JSON-safe output from tool result."""
+            # Try structured_content first (FastMCP 2.x server-side call)
+            if hasattr(result, 'structured_content') and result.structured_content is not None:
+                try:
+                    json.dumps(result.structured_content)
+                    return result.structured_content
+                except (TypeError, ValueError):
+                    pass
+            # Try content text
+            if hasattr(result, 'content') and result.content:
                 text = result.content[0].text if hasattr(result.content[0], 'text') else str(result.content[0])
                 try:
                     return json.loads(text)
                 except (json.JSONDecodeError, ValueError):
                     return text
-            if result.data is not None:
+            if hasattr(result, 'data') and result.data is not None:
                 if hasattr(result.data, 'model_dump'):
                     return result.data.model_dump()
                 if hasattr(result.data, 'dict'):
@@ -215,10 +231,9 @@ def create_rest_bridge(
             return None
 
         try:
-            async with Client(mcp) as client:
-                result = await _call_tool(client, tool_name, arguments)
+            result = await _call_tool(tool_name, arguments)
 
-            if result.is_error:
+            if hasattr(result, 'is_error') and result.is_error:
                 error_text = result.content[0].text if result.content else "Unknown error"
                 return JSONResponse({
                     "status": "error",
