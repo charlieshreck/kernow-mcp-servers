@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 CLEANUPARR_URL = os.environ.get("CLEANUPARR_URL", "https://cleanuparr.kernow.io")
+CLEANUPARR_API_KEY = os.environ.get("CLEANUPARR_API_KEY", "")
 
 # Job types
 JOB_TYPES = ["QueueCleaner", "DownloadCleaner", "MalwareBlocker", "BlacklistSynchronizer"]
@@ -18,9 +19,12 @@ JOB_TYPES = ["QueueCleaner", "DownloadCleaner", "MalwareBlocker", "BlacklistSync
 
 async def cleanuparr_request(endpoint: str, method: str = "GET", data: dict = None) -> dict:
     """Make request to Cleanuparr API."""
+    headers = {}
+    if CLEANUPARR_API_KEY:
+        headers["X-Api-Key"] = CLEANUPARR_API_KEY
     async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
         url = f"{CLEANUPARR_URL}/api/{endpoint.lstrip('/')}"
-        response = await client.request(method, url, json=data)
+        response = await client.request(method, url, json=data, headers=headers)
         response.raise_for_status()
         return response.json() if response.content else {}
 

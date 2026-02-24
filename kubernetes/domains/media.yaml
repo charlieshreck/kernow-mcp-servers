@@ -118,9 +118,14 @@ spec:
             # Huntarr (no API key required - internal API)
             - name: HUNTARR_URL
               value: "https://huntarr.kernow.io"
-            # Cleanuparr (no API key required - internal API)
+            # Cleanuparr (v2.7.0+ requires API key)
             - name: CLEANUPARR_URL
               value: "https://cleanuparr.kernow.io"
+            - name: CLEANUPARR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-cleanuparr
+                  key: API_KEY
             # Maintainerr (no API key required - internal API)
             - name: MAINTAINERR_URL
               value: "https://maintainerr.kernow.io"
