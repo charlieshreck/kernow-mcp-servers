@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 CLEANUPARR_URL = os.environ.get("CLEANUPARR_URL", "https://cleanuparr.kernow.io")
 
 # Job types
-JOB_TYPES = ["QueueCleaner", "SeedingCleaner", "OrphanCleaner", "BlacklistSync"]
+JOB_TYPES = ["QueueCleaner", "DownloadCleaner", "MalwareBlocker", "BlacklistSynchronizer"]
 
 
 async def cleanuparr_request(endpoint: str, method: str = "GET", data: dict = None) -> dict:
@@ -85,7 +85,7 @@ def register_tools(mcp: FastMCP):
         """Get details of a specific cleanup job.
 
         Args:
-            job_type: One of QueueCleaner, SeedingCleaner, OrphanCleaner, BlacklistSync
+            job_type: One of QueueCleaner, DownloadCleaner, MalwareBlocker, BlacklistSynchronizer
         """
         if job_type not in JOB_TYPES:
             return {"error": f"Invalid job_type. Must be one of: {JOB_TYPES}"}
@@ -99,7 +99,7 @@ def register_tools(mcp: FastMCP):
         """Trigger a cleanup job to run immediately.
 
         Args:
-            job_type: One of QueueCleaner, SeedingCleaner, OrphanCleaner, BlacklistSync
+            job_type: One of QueueCleaner, DownloadCleaner, MalwareBlocker, BlacklistSynchronizer
         """
         if job_type not in JOB_TYPES:
             return {"error": f"Invalid job_type. Must be one of: {JOB_TYPES}"}
@@ -114,7 +114,7 @@ def register_tools(mcp: FastMCP):
         """Start a cleanup job with optional cron schedule.
 
         Args:
-            job_type: One of QueueCleaner, SeedingCleaner, OrphanCleaner, BlacklistSync
+            job_type: One of QueueCleaner, DownloadCleaner, MalwareBlocker, BlacklistSynchronizer
             cron_schedule: Optional cron expression (e.g., "0 */6 * * *" for every 6 hours)
         """
         if job_type not in JOB_TYPES:
@@ -131,7 +131,7 @@ def register_tools(mcp: FastMCP):
         """Update the schedule for a cleanup job.
 
         Args:
-            job_type: One of QueueCleaner, SeedingCleaner, OrphanCleaner, BlacklistSync
+            job_type: One of QueueCleaner, DownloadCleaner, MalwareBlocker, BlacklistSynchronizer
             cron_schedule: Cron expression (e.g., "0 */6 * * *" for every 6 hours)
         """
         if job_type not in JOB_TYPES:
@@ -198,50 +198,52 @@ def register_tools(mcp: FastMCP):
             return {"error": str(e)}
 
     @mcp.tool()
-    async def cleanuparr_get_seeding_cleaner_config() -> dict:
-        """Get Cleanuparr seeding cleaner configuration."""
+    async def cleanuparr_get_download_cleaner_config() -> dict:
+        """Get Cleanuparr download cleaner configuration (manages seeding rules and cleanup)."""
         try:
-            return await cleanuparr_request("configuration/seeding_cleaner")
+            return await cleanuparr_request("configuration/download_cleaner")
         except Exception as e:
             return {"error": str(e)}
 
     @mcp.tool()
-    async def cleanuparr_update_seeding_cleaner_config(config: dict) -> dict:
-        """Update Cleanuparr seeding cleaner configuration.
+    async def cleanuparr_update_download_cleaner_config(config: dict) -> dict:
+        """Update Cleanuparr download cleaner configuration.
 
         Args:
             config: Configuration dict with fields like:
-                - Enabled: bool - Enable the seeding cleaner
-                - CronExpression: str - Cron schedule
-                - SeedingTimeMinutes: int - Minimum seeding time before cleanup
+                - Enabled: bool - Enable the download cleaner
+                - CronExpression: str - Cron schedule (Quartz format)
+                - UseAdvancedScheduling: bool - Use cron instead of basic interval
+                - Categories: list - Seeding rules per category with MaxRatio, MinSeedTime, MaxSeedTime
+                - IgnoredDownloads: list - Downloads to ignore
         """
         try:
-            result = await cleanuparr_request("configuration/seeding_cleaner", "PUT", config)
-            return {"success": True, "message": "Seeding cleaner config updated", "result": result}
+            result = await cleanuparr_request("configuration/download_cleaner", "PUT", config)
+            return {"success": True, "message": "Download cleaner config updated", "result": result}
         except Exception as e:
             return {"error": str(e)}
 
     @mcp.tool()
-    async def cleanuparr_get_orphan_cleaner_config() -> dict:
-        """Get Cleanuparr orphan cleaner configuration."""
+    async def cleanuparr_get_malware_blocker_config() -> dict:
+        """Get Cleanuparr malware blocker configuration."""
         try:
-            return await cleanuparr_request("configuration/orphan_cleaner")
+            return await cleanuparr_request("configuration/malware_blocker")
         except Exception as e:
             return {"error": str(e)}
 
     @mcp.tool()
-    async def cleanuparr_update_orphan_cleaner_config(config: dict) -> dict:
-        """Update Cleanuparr orphan cleaner configuration.
+    async def cleanuparr_update_malware_blocker_config(config: dict) -> dict:
+        """Update Cleanuparr malware blocker configuration.
 
         Args:
             config: Configuration dict with fields like:
-                - Enabled: bool - Enable the orphan cleaner
+                - Enabled: bool - Enable the malware blocker
                 - CronExpression: str - Cron schedule
-                - IgnoreHardlinks: bool - Ignore files with hardlinks
+                - BlocklistUrls: list - URLs of blocklists to use
         """
         try:
-            result = await cleanuparr_request("configuration/orphan_cleaner", "PUT", config)
-            return {"success": True, "message": "Orphan cleaner config updated", "result": result}
+            result = await cleanuparr_request("configuration/malware_blocker", "PUT", config)
+            return {"success": True, "message": "Malware blocker config updated", "result": result}
         except Exception as e:
             return {"error": str(e)}
 
