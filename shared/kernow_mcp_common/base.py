@@ -123,10 +123,34 @@ def create_rest_bridge(
 
     # Cache tools that need {"params": ...} wrapping (Pydantic model tools)
     # vs tools that need unwrapping (flat kwargs tools called with params wrapper).
-    # After the first call triggers a retry, cache the tool name so subsequent
-    # calls pre-wrap/unwrap without hitting FastMCP validation (which logs errors).
     _wrap_tools: set = set()
     _unwrap_tools: set = set()
+    _cache_seeded = False
+
+    async def _seed_wrap_cache():
+        """Pre-seed _wrap_tools by introspecting tool schemas at first call.
+
+        Tools with a Pydantic model param have schema like:
+            {"required": ["params"], "properties": {"params": {...}}}
+        Pre-populating avoids the first-call validation error that FastMCP
+        logs at ERROR level (which Coroot counts as errors).
+        """
+        nonlocal _cache_seeded
+        if _cache_seeded:
+            return
+        _cache_seeded = True
+        try:
+            tools = await mcp.list_tools()
+            for tool in tools:
+                schema = tool.parameters if hasattr(tool, 'parameters') else {}
+                required = schema.get("required", [])
+                props = schema.get("properties", {})
+                if "params" in required and "params" in props and len(props) == 1:
+                    _wrap_tools.add(tool.name)
+            if _wrap_tools:
+                logger.info(f"Pre-seeded wrap cache: {sorted(_wrap_tools)}")
+        except Exception as e:
+            logger.warning(f"Could not pre-seed wrap cache: {e}")
 
     async def api_call(request: Request) -> JSONResponse:
         """REST endpoint to invoke MCP tools via POST.
@@ -145,6 +169,8 @@ def create_rest_bridge(
                 "error": <error message> | null
             }
         """
+        await _seed_wrap_cache()
+
         # Auth check
         if require_auth and auth_token:
             auth_header = request.headers.get("Authorization", "")
