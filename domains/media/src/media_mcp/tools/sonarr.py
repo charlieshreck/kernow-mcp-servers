@@ -92,17 +92,39 @@ def register_tools(mcp: FastMCP):
     async def sonarr_get_queue() -> List[dict]:
         """Get Sonarr download queue."""
         try:
-            queue = await arr_request("queue?pageSize=50")
+            queue = await arr_request("queue?pageSize=50&includeUnknownSeriesItems=true")
             return [{
+                "id": item.get("id"),
                 "title": item.get("title"),
-                "series": item.get("series", {}).get("title"),
+                "series": item.get("series", {}).get("title") if item.get("series") else None,
                 "status": item.get("status"),
+                "trackedDownloadStatus": item.get("trackedDownloadStatus"),
+                "trackedDownloadState": item.get("trackedDownloadState"),
+                "statusMessages": [m.get("title", "") for m in item.get("statusMessages", [])],
                 "sizeleft": item.get("sizeleft", 0),
                 "timeleft": item.get("timeleft", "unknown"),
-                "quality": item.get("quality", {}).get("quality", {}).get("name")
+                "quality": item.get("quality", {}).get("quality", {}).get("name"),
+                "downloadClient": item.get("downloadClient"),
             } for item in queue.get("records", [])]
         except Exception as e:
             return [{"error": str(e)}]
+
+    @mcp.tool()
+    async def sonarr_remove_queue_item(queue_id: int, remove_from_client: bool = False,
+                                        blocklist: bool = False) -> dict:
+        """Remove an item from Sonarr's download queue.
+
+        Args:
+            queue_id: The queue item ID (from sonarr_get_queue)
+            remove_from_client: Also remove from download client (Transmission/SABnzbd)
+            blocklist: Add release to blocklist to prevent re-download
+        """
+        try:
+            params = f"removeFromClient={str(remove_from_client).lower()}&blocklist={str(blocklist).lower()}"
+            await arr_request(f"queue/{queue_id}?{params}", "DELETE")
+            return {"success": True, "message": f"Queue item {queue_id} removed"}
+        except Exception as e:
+            return {"error": str(e)}
 
     @mcp.tool()
     async def sonarr_trigger_search(series_id: int) -> dict:
