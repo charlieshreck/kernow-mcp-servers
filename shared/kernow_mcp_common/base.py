@@ -121,6 +121,13 @@ def create_rest_bridge(
     # Get auth token from environment (set via Infisical)
     auth_token = os.environ.get("A2A_API_TOKEN", "")
 
+    # Cache tools that need {"params": ...} wrapping (Pydantic model tools)
+    # vs tools that need unwrapping (flat kwargs tools called with params wrapper).
+    # After the first call triggers a retry, cache the tool name so subsequent
+    # calls pre-wrap/unwrap without hitting FastMCP validation (which logs errors).
+    _wrap_tools: set = set()
+    _unwrap_tools: set = set()
+
     async def api_call(request: Request) -> JSONResponse:
         """REST endpoint to invoke MCP tools via POST.
 
@@ -184,6 +191,9 @@ def create_rest_bridge(
             Handles both exception-based and result-based error reporting from
             FastMCP (some versions return is_error=True results for validation
             errors instead of raising exceptions).
+
+            Caches which tools need wrapping/unwrapping so subsequent calls
+            skip the failed first attempt (which FastMCP logs as an error).
             """
             def _is_error_result(result):
                 return hasattr(result, 'is_error') and result.is_error
@@ -204,18 +214,28 @@ def create_rest_bridge(
                         and list(call_args.keys()) == ["params"]
                         and isinstance(call_args.get("params"), dict))
 
+            # Pre-wrap/unwrap for cached tools (avoids FastMCP validation error logging)
+            if name in _wrap_tools and "params" not in args:
+                logger.debug(f"Pre-wrapping {name} with params (cached)")
+                return await mcp.call_tool(name, {"params": args})
+            if name in _unwrap_tools and list(args.keys()) == ["params"] and isinstance(args.get("params"), dict):
+                logger.debug(f"Pre-unwrapping {name} params (cached)")
+                return await mcp.call_tool(name, args["params"])
+
             try:
                 result = await mcp.call_tool(name, args)
             except Exception as e:
                 err = str(e)
                 if _needs_wrap(err, args):
-                    logger.debug(f"Retrying {name} with params wrapper")
+                    _wrap_tools.add(name)
+                    logger.debug(f"Retrying {name} with params wrapper (now cached)")
                     try:
                         return await mcp.call_tool(name, {"params": args})
                     except Exception:
                         raise e
                 if _needs_unwrap(err, args):
-                    logger.debug(f"Retrying {name} by unwrapping params")
+                    _unwrap_tools.add(name)
+                    logger.debug(f"Retrying {name} by unwrapping params (now cached)")
                     return await mcp.call_tool(name, args["params"])
                 raise
 
@@ -223,10 +243,12 @@ def create_rest_bridge(
             if _is_error_result(result):
                 err = _error_text(result)
                 if _needs_wrap(err, args):
-                    logger.debug(f"Retrying {name} with params wrapper (error result)")
+                    _wrap_tools.add(name)
+                    logger.debug(f"Retrying {name} with params wrapper (now cached, error result)")
                     return await mcp.call_tool(name, {"params": args})
                 if _needs_unwrap(err, args):
-                    logger.debug(f"Retrying {name} by unwrapping params (error result)")
+                    _unwrap_tools.add(name)
+                    logger.debug(f"Retrying {name} by unwrapping params (now cached, error result)")
                     return await mcp.call_tool(name, args["params"])
 
             return result
