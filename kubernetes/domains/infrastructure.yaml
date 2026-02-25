@@ -42,10 +42,6 @@ kind: Deployment
 metadata:
   name: infrastructure-mcp
   namespace: ai-platform
-  annotations:
-    coroot.com/slo-latency-threshold: "2.5s"
-    coroot.com/slo-latency-objective: "99%"
-    coroot.com/slo-availability-objective: "99%"
   labels:
     app: infrastructure-mcp
     domain: infrastructure
@@ -56,6 +52,10 @@ spec:
       app: infrastructure-mcp
   template:
     metadata:
+      annotations:
+        coroot.com/slo-latency-threshold: "2.5s"
+        coroot.com/slo-latency-objective: "99%"
+        coroot.com/slo-availability-objective: "99%"
       labels:
         app: infrastructure-mcp
         domain: infrastructure
