@@ -38,6 +38,7 @@ jobs:
           - home
           - knowledge
           - infrastructure
+          - invest
 
     steps:
       - name: Checkout repository
@@ -89,6 +90,7 @@ jobs:
           - home
           - knowledge
           - infrastructure
+          - invest
 
     steps:
       - name: Checkout repository
