@@ -1,0 +1,119 @@
+# Invest MCP - Investment advisory data and analysis
+# Proxies to Investmentology API on Haute Banque LXC
+# Endpoint: invest-mcp.agentic.kernow.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: invest-mcp
+  namespace: ai-platform
+  labels:
+    app: invest-mcp
+    component: mcp
+    domain: invest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: invest-mcp
+  template:
+    metadata:
+      labels:
+        app: invest-mcp
+        component: mcp
+        domain: invest
+    spec:
+      containers:
+        - name: invest-mcp
+          image: ghcr.io/charlieshreck/mcp-invest:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            # Server config
+            - name: PORT
+              value: "8000"
+            - name: HOST
+              value: "0.0.0.0"
+            # Investmentology API
+            - name: INVEST_API_URL
+              value: "http://haute-banque.kernow.io"
+            - name: INVEST_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-invest
+                  key: API_TOKEN
+                  optional: true
+            # A2A REST bridge authentication
+            - name: A2A_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: a2a-api-token
+                  key: TOKEN
+                  optional: true
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: invest-mcp
+  namespace: ai-platform
+  labels:
+    app: invest-mcp
+    component: mcp
+    domain: invest
+spec:
+  type: ClusterIP
+  selector:
+    app: invest-mcp
+  ports:
+    - port: 8000
+      targetPort: 8000
+      name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: invest-mcp
+  namespace: ai-platform
+  labels:
+    app: invest-mcp
+    component: mcp
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - invest-mcp.agentic.kernow.io
+      secretName: kernow-io-tls
+  rules:
+    - host: invest-mcp.agentic.kernow.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: invest-mcp
+                port:
+                  number: 8000

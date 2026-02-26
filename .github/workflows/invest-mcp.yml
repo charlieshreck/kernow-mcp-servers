@@ -1,0 +1,46 @@
+name: invest-mcp CI/CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'domains/invest/**'
+      - 'shared/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'domains/invest/**'
+      - 'shared/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r domains/invest/requirements.txt
+      - run: python -c "from domains.invest.server import mcp; print('Server imports OK')"
+
+  build-and-push:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: arc-runner-set
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: domains/invest
+          push: true
+          tags: |
+            ghcr.io/charlieshreck/mcp-invest:latest
+            ghcr.io/charlieshreck/mcp-invest:${{ github.sha }}
