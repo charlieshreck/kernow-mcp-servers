@@ -70,7 +70,7 @@ def register_tools(mcp: FastMCP):
         if app not in HUNTARR_APPS:
             return {"error": f"Invalid app. Must be one of: {HUNTARR_APPS}"}
         try:
-            result = await huntarr_request(f"api/{app}/settings", "POST", settings)
+            result = await huntarr_request(f"api/settings/{app}", "POST", settings)
             return {"success": True, "message": f"Settings updated for {app}", "result": result}
         except Exception as e:
             return {"error": str(e)}

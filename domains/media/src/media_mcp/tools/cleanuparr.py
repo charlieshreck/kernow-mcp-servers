@@ -202,6 +202,90 @@ def register_tools(mcp: FastMCP):
             return {"error": str(e)}
 
     @mcp.tool()
+    async def cleanuparr_create_stall_rule(
+        name: str,
+        max_strikes: int = 3,
+        privacy_type: str = "Public",
+        min_completion_percentage: int = 0,
+        max_completion_percentage: int = 100,
+        reset_strikes_on_progress: bool = True,
+        delete_private_from_client: bool = False,
+    ) -> dict:
+        """Create a Cleanuparr stall rule to remove downloads that stop progressing.
+
+        Args:
+            name: Descriptive name for the rule
+            max_strikes: Consecutive stall checks before removal (min 3; each check = cron interval, default 5 min)
+            privacy_type: Which torrents to apply: "Public", "Private", or "Both"
+            min_completion_percentage: Apply rule when download is above this % complete (0 = all)
+            max_completion_percentage: Apply rule when download is below this % complete (100 = all)
+            reset_strikes_on_progress: Reset strike count if download resumes
+            delete_private_from_client: Also remove stalled private torrents from the download client
+        """
+        payload = {
+            "name": name,
+            "enabled": True,
+            "maxStrikes": max_strikes,
+            "privacyType": privacy_type,
+            "minCompletionPercentage": min_completion_percentage,
+            "maxCompletionPercentage": max_completion_percentage,
+            "resetStrikesOnProgress": reset_strikes_on_progress,
+            "deletePrivateTorrentsFromClient": delete_private_from_client,
+        }
+        try:
+            result = await cleanuparr_request("queue-rules/stall", "POST", payload)
+            return {"success": True, "message": f"Stall rule '{name}' created", "result": result}
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    async def cleanuparr_create_slow_rule(
+        name: str,
+        min_speed: str = "10KB/s",
+        max_strikes: int = 3,
+        privacy_type: str = "Public",
+        min_completion_percentage: int = 0,
+        max_completion_percentage: int = 100,
+        max_time_hours: float = 0,
+        reset_strikes_on_progress: bool = True,
+        delete_private_from_client: bool = False,
+        ignore_above_size: str = None,
+    ) -> dict:
+        """Create a Cleanuparr slow rule to remove downloads that are consistently too slow.
+
+        Args:
+            name: Descriptive name for the rule
+            min_speed: Minimum acceptable speed (e.g., "10KB/s", "1MB/s"). Downloads below this get strikes.
+            max_strikes: Consecutive slow checks before removal (min 3)
+            privacy_type: Which torrents to apply: "Public", "Private", or "Both"
+            min_completion_percentage: Apply rule when download is above this % complete
+            max_completion_percentage: Apply rule when download is below this % complete
+            max_time_hours: Max allowed download time in hours (0 = disabled)
+            reset_strikes_on_progress: Reset strike count if speed improves
+            delete_private_from_client: Also remove slow private torrents from the download client
+            ignore_above_size: Skip files larger than this size (e.g., "50GB")
+        """
+        payload = {
+            "name": name,
+            "enabled": True,
+            "maxStrikes": max_strikes,
+            "privacyType": privacy_type,
+            "minCompletionPercentage": min_completion_percentage,
+            "maxCompletionPercentage": max_completion_percentage,
+            "resetStrikesOnProgress": reset_strikes_on_progress,
+            "deletePrivateTorrentsFromClient": delete_private_from_client,
+            "minSpeed": min_speed,
+            "maxTimeHours": max_time_hours,
+        }
+        if ignore_above_size:
+            payload["ignoreAboveSize"] = ignore_above_size
+        try:
+            result = await cleanuparr_request("queue-rules/slow", "POST", payload)
+            return {"success": True, "message": f"Slow rule '{name}' created", "result": result}
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
     async def cleanuparr_get_download_cleaner_config() -> dict:
         """Get Cleanuparr download cleaner configuration (manages seeding rules and cleanup)."""
         try:
