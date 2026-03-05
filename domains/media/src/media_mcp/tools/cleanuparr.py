@@ -19,7 +19,7 @@ JOB_TYPES = ["QueueCleaner", "DownloadCleaner", "MalwareBlocker", "BlacklistSync
 
 async def cleanuparr_request(endpoint: str, method: str = "GET", data: dict = None) -> dict:
     """Make request to Cleanuparr API."""
-    headers = {}
+    headers = {"Accept": "application/json"}
     if CLEANUPARR_API_KEY:
         headers["X-Api-Key"] = CLEANUPARR_API_KEY
     async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
@@ -196,7 +196,9 @@ def register_tools(mcp: FastMCP):
                 - IgnoredDownloads: list - Downloads to ignore
         """
         try:
-            result = await cleanuparr_request("configuration/queue_cleaner", "PUT", config)
+            # API rejects PUT if 'id' is included in the body
+            payload = {k: v for k, v in config.items() if k != "id"}
+            result = await cleanuparr_request("configuration/queue_cleaner", "PUT", payload)
             return {"success": True, "message": "Queue cleaner config updated", "result": result}
         except Exception as e:
             return {"error": str(e)}
