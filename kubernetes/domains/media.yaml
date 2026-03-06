@@ -115,9 +115,6 @@ spec:
                 secretKeyRef:
                   name: mcp-sabnzbd
                   key: API_KEY
-            # Huntarr (no API key required - internal API)
-            - name: HUNTARR_URL
-              value: "https://huntarr.kernow.io"
             # Cleanuparr (v2.7.0+ requires API key)
             - name: CLEANUPARR_URL
               value: "https://cleanuparr.kernow.io"

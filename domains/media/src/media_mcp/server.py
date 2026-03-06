@@ -13,7 +13,7 @@ import uvicorn
 
 from media_mcp.tools import (
     plex, sonarr, radarr, prowlarr, overseerr, tautulli, transmission, sabnzbd,
-    huntarr, cleanuparr, maintainerr, notifiarr, recommendarr
+    cleanuparr, maintainerr, notifiarr, recommendarr
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -35,7 +35,6 @@ mcp = FastMCP(
     - tautulli_* : Plex statistics
     - transmission_* : Torrent downloads
     - sabnzbd_* : Usenet downloads
-    - huntarr_* : Missing media discovery
     - cleanuparr_* : Download queue cleanup
     - maintainerr_* : Plex media maintenance
     - notifiarr_* : Notification client
@@ -52,7 +51,6 @@ overseerr.register_tools(mcp)
 tautulli.register_tools(mcp)
 transmission.register_tools(mcp)
 sabnzbd.register_tools(mcp)
-huntarr.register_tools(mcp)
 cleanuparr.register_tools(mcp)
 maintainerr.register_tools(mcp)
 notifiarr.register_tools(mcp)
@@ -128,14 +126,6 @@ async def check_components() -> dict:
         logger.warning(f"SABnzbd health check failed: {e}")
         components["sabnzbd"] = False
 
-    # Huntarr
-    try:
-        status = await huntarr.get_status()
-        components["huntarr"] = "error" not in status
-    except Exception as e:
-        logger.warning(f"Huntarr health check failed: {e}")
-        components["huntarr"] = False
-
     # Cleanuparr
     try:
         status = await cleanuparr.get_status()
@@ -201,7 +191,6 @@ async def deep_health_endpoint(request):
             ("tautulli", lambda: tautulli.get_activity()),
             ("transmission", lambda: transmission.list_torrents()),
             ("sabnzbd", lambda: sabnzbd.get_queue()),
-            ("huntarr", lambda: huntarr.get_status()),
             ("cleanuparr", lambda: cleanuparr.get_status()),
             ("maintainerr", lambda: maintainerr.get_status()),
             ("notifiarr", lambda: notifiarr.get_status()),
